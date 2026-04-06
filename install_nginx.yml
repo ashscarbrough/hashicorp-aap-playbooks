@@ -1,0 +1,79 @@
+---
+- name: Install and configure NGINX (RHEL / Amazon Linux 2023)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    nginx_index_content: |
+      <html>
+        <head><title>AAP Demo - NGINX</title></head>
+        <body>
+          <h1>NGINX installed via Ansible</h1>
+          <p>Host: {{ inventory_hostname }}</p>
+        </body>
+      </html>
+
+  pre_tasks:
+    - name: Ensure supported OS
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "RedHat"
+        fail_msg: "This playbook supports RHEL-family and Amazon Linux 2023 only."
+
+  handlers:
+    - name: Restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
+  tasks:
+    - name: Install nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+
+    - name: Deploy demo index page
+      ansible.builtin.copy:
+        dest: /usr/share/nginx/html/index.html
+        mode: "0644"
+        content: "{{ nginx_index_content }}"
+      notify: Restart nginx
+
+    - name: Enable and start nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Open HTTP/HTTPS in firewalld (best effort)
+      ansible.builtin.block:
+        - name: Ensure firewalld is installed
+          ansible.builtin.package:
+            name: firewalld
+            state: present
+
+        - name: Ensure firewalld running
+          ansible.builtin.service:
+            name: firewalld
+            state: started
+            enabled: true
+
+        - name: Allow http service
+          ansible.posix.firewalld:
+            service: http
+            permanent: true
+            state: enabled
+            immediate: true
+
+        - name: Allow https service
+          ansible.posix.firewalld:
+            service: https
+            permanent: true
+            state: enabled
+            immediate: true
+      when: ansible_facts.os_family == "RedHat"
+      rescue:
+        - name: Firewalld not available or module missing; skipping
+          ansible.builtin.debug:
+            msg: "Skipping firewalld configuration (best effort)."
