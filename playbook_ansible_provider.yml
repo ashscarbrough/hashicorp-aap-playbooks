@@ -1,5 +1,5 @@
 ---
-- name: Test AAP File Creation
+- name: Test AAP File Creation Using AAP Provider Job Resource
   hosts: all
   become: true
   gather_facts: false
@@ -7,17 +7,17 @@
   tasks:
     - name: Create proof file on target host
       ansible.builtin.copy:
-        dest: /tmp/aap-proof.txt
+        dest: /tmp/aap-provider-job-resource-file.txt
         mode: "0644"
         content: |
-          AAP connectivity proof 
+          AAP connectivity proof - Using AAP Provider Job Resource
           inventory_hostname={{ inventory_hostname }}
           ansible_host={{ ansible_host | default('undefined') }}
           created_at={{ now(fmt='%Y-%m-%dT%H:%M:%S%z') }}
 
     - name: Verify proof file exists
       ansible.builtin.stat:
-        path: /tmp/aap-proof.txt
+        path: /tmp/aap-provider-job-resource-file.txt
       register: proof_file
 
     - name: Report proof file status
