@@ -4,6 +4,22 @@
   become: true
   gather_facts: false
 
+  pre_tasks:
+    - name: Wait for SSH connectivity to target host
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        timeout: 300
+        sleep: 15
+        connect_timeout: 10
+      become: false
+
+    - name: Wait for cloud-init to finish when present
+      ansible.builtin.raw: |
+        if command -v cloud-init >/dev/null 2>&1; then
+          cloud-init status --wait
+        fi
+      changed_when: false
+
   tasks:
     - name: Create proof file on target host
       ansible.builtin.copy:
