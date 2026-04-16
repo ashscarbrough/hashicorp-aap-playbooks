@@ -4,7 +4,7 @@
   become: true
 
   vars:
-    app_version: "{{ app_version | default('unknown') }}"
+    resolved_app_version: "{{ app_version | default('unknown') }}"
     aap_job_id: "{{ tower_job_id | default('unknown') }}"
     aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
@@ -69,7 +69,7 @@
           Timestamp : {{ ansible_date_time.iso8601 }}
           Host      : {{ ansible_hostname }}
           IP        : {{ ansible_default_ipv4.address }}
-          Version   : {{ app_version }}
+          Version   : {{ resolved_app_version }}
           </pre>
           </body></html>
         mode: '0644'
@@ -86,7 +86,7 @@
           ==========================================
           Timestamp : {{ ansible_date_time.iso8601 }}
           AAP job   : {{ aap_job_id }}
-          Version   : {{ app_version }}
+          Version   : {{ resolved_app_version }}
           Host      : {{ ansible_hostname }}
           IP        : {{ ansible_default_ipv4.address }}
         mode: '0644'
@@ -118,4 +118,4 @@
       ansible.builtin.debug:
         msg: >
           Instance {{ ansible_hostname }} configured successfully.
-          Version {{ app_version }} is live at http://{{ ansible_default_ipv4.address }}
+          Version {{ resolved_app_version }} is live at http://{{ ansible_default_ipv4.address }}
