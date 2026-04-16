@@ -29,50 +29,22 @@
           - network
           - hardware
 
-    - name: Update index page with runtime details
-      ansible.builtin.copy:
-        dest: /usr/share/nginx/html/index.html
-        content: |
-          <!DOCTYPE html>
-          <html>
-          <head><title>AAP + TFE Demo</title>
-          <style>
-            body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;}
-            .badge{display:inline-block;padding:4px 12px;border-radius:4px;font-size:14px;margin:2px;}
-            .packer{background:#5C4EE5;color:white;}
-            .terraform{background:#7B42BC;color:white;}
-            .ansible{background:#EE0000;color:white;}
-            table{border-collapse:collapse;width:100%;}
-            td,th{border:1px solid #ddd;padding:8px;text-align:left;}
-            th{background:#f2f2f2;}
-            h1{color:#5C4EE5;}
-          </style></head>
-          <body>
-          <h1>HashiCorp + Red Hat Better Together</h1>
-
-          <h2>Provisioned by <span class='badge packer'>HCP Packer</span>
-                            <span class='badge terraform'>Terraform</span>
-                            <span class='badge ansible'>Ansible</span></h2>
-
-          <h2>Image Details (baked by Packer)</h2>
+    - name: Inject runtime details into existing Packer page
+      ansible.builtin.replace:
+        path: /usr/share/nginx/html/index.html
+        regexp: "<p><span class='pending'>Pending AAP configuration\\.\\.\\.</span></p>"
+        replace: |
+          <div style="border-top:2px solid #EE0000;margin-top:20px;padding-top:20px;">
+          <h2>Runtime Configuration <span class='badge ansible'>Ansible Automation Platform</span></h2>
           <table>
-            <tr><th>App version</th><td>{{ app_version }}</td></tr>
             <tr><th>Hostname</th><td>{{ ansible_hostname }}</td></tr>
-            <tr><th>OS</th><td>{{ ansible_distribution }} {{ ansible_distribution_version }}</td></tr>
-            <tr><th>Architecture</th><td>{{ ansible_architecture }}</td></tr>
-          </table>
-
-          <h2>Runtime Details (configured by Ansible)</h2>
-          <table>
             <tr><th>IP address</th><td>{{ ansible_default_ipv4.address }}</td></tr>
             <tr><th>Total memory</th><td>{{ ansible_memtotal_mb }} MB</td></tr>
             <tr><th>CPU cores</th><td>{{ ansible_processor_vcpus }}</td></tr>
             <tr><th>AAP job ID</th><td>{{ aap_job_id }}</td></tr>
             <tr><th>Configured at</th><td>{{ ansible_date_time.iso8601 }}</td></tr>
           </table>
-
-          <p>Visit <a href='/status'>/status</a> for live health status.</p>
-          </body></html>
+          </div>
         mode: '0644'
 
     # -------------------------------------------------------
