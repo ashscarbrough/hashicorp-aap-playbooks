@@ -1,0 +1,149 @@
+---
+- name: Configure demo instance — AAP runtime layer
+  hosts: all
+  become: true
+
+  vars:
+    app_version: "{{ app_version | default('unknown') }}"
+    aap_job_id: "{{ tower_job_id | default('unknown') }}"
+    aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
+
+  pre_tasks:
+    - name: Wait for SSH connection
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+  tasks:
+
+    # -------------------------------------------------------
+    # Task 1 — Update the version page with live runtime info
+    # Shows: Packer baked the base, Ansible knows the runtime
+    # -------------------------------------------------------
+    - name: Gather instance facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+          - hardware
+
+    - name: Update index page with runtime details
+      ansible.builtin.copy:
+        dest: /usr/share/nginx/html/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head><title>AAP + TFE Demo</title>
+          <style>
+            body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;}
+            .badge{display:inline-block;padding:4px 12px;border-radius:4px;font-size:14px;margin:2px;}
+            .packer{background:#5C4EE5;color:white;}
+            .terraform{background:#7B42BC;color:white;}
+            .ansible{background:#EE0000;color:white;}
+            table{border-collapse:collapse;width:100%;}
+            td,th{border:1px solid #ddd;padding:8px;text-align:left;}
+            th{background:#f2f2f2;}
+            h1{color:#5C4EE5;}
+          </style></head>
+          <body>
+          <h1>HashiCorp + Red Hat Better Together</h1>
+
+          <h2>Provisioned by <span class='badge packer'>HCP Packer</span>
+                            <span class='badge terraform'>Terraform</span>
+                            <span class='badge ansible'>Ansible</span></h2>
+
+          <h2>Image Details (baked by Packer)</h2>
+          <table>
+            <tr><th>App version</th><td>{{ app_version }}</td></tr>
+            <tr><th>Hostname</th><td>{{ ansible_hostname }}</td></tr>
+            <tr><th>OS</th><td>{{ ansible_distribution }} {{ ansible_distribution_version }}</td></tr>
+            <tr><th>Architecture</th><td>{{ ansible_architecture }}</td></tr>
+          </table>
+
+          <h2>Runtime Details (configured by Ansible)</h2>
+          <table>
+            <tr><th>IP address</th><td>{{ ansible_default_ipv4.address }}</td></tr>
+            <tr><th>Total memory</th><td>{{ ansible_memtotal_mb }} MB</td></tr>
+            <tr><th>CPU cores</th><td>{{ ansible_processor_vcpus }}</td></tr>
+            <tr><th>AAP job ID</th><td>{{ aap_job_id }}</td></tr>
+            <tr><th>Configured at</th><td>{{ ansible_date_time.iso8601 }}</td></tr>
+          </table>
+
+          <p>Visit <a href='/status'>/status</a> for live health status.</p>
+          </body></html>
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # Task 2 — Write the /status endpoint
+    # This is pure runtime data — impossible to bake into image
+    # -------------------------------------------------------
+    - name: Write runtime status page
+      ansible.builtin.copy:
+        dest: /var/www/status/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head><title>Instance Status</title>
+          <style>body{font-family:monospace;max-width:800px;margin:40px auto;padding:0 20px;}
+          .ok{color:green;font-weight:bold;}</style></head>
+          <body>
+          <h1>Instance Health Status</h1>
+          <p>Status: <span class='ok'>HEALTHY</span></p>
+          <h2>Ansible Audit Trail</h2>
+          <pre>
+          Job ID    : {{ aap_job_id }}
+          Timestamp : {{ ansible_date_time.iso8601 }}
+          Host      : {{ ansible_hostname }}
+          IP        : {{ ansible_default_ipv4.address }}
+          Version   : {{ app_version }}
+          </pre>
+          </body></html>
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # Task 3 — Write audit file to the instance
+    # Tangible proof on the filesystem that AAP ran
+    # -------------------------------------------------------
+    - name: Write Ansible audit file
+      ansible.builtin.copy:
+        dest: /etc/ansible-configured
+        content: |
+          Configured by Ansible Automation Platform
+          ==========================================
+          Timestamp : {{ ansible_date_time.iso8601 }}
+          AAP job   : {{ aap_job_id }}
+          Version   : {{ app_version }}
+          Host      : {{ ansible_hostname }}
+          IP        : {{ ansible_default_ipv4.address }}
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # Task 4 — Ensure nginx is serving correctly
+    # Validates the full chain worked end to end
+    # -------------------------------------------------------
+    - name: Ensure nginx is running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Verify index page is reachable
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}"
+        return_content: true
+        status_code: 200
+      register: health_check
+
+    - name: Verify status page is reachable
+      ansible.builtin.uri:
+        url: "http://{{ ansible_default_ipv4.address }}/status"
+        return_content: true
+        status_code: 200
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: >
+          Instance {{ ansible_hostname }} configured successfully.
+          Version {{ app_version }} is live at http://{{ ansible_default_ipv4.address }}
