@@ -35,7 +35,7 @@
         regexp: "<p><span class='[^']*pending[^']*'>Pending AAP configuration[^<]*</span></p>"
         replace: |
           <div style="border-top:2px solid #EE0000;margin-top:20px;padding-top:20px;">
-          <h2>Runtime Configuration <span class='badge ansible'>Ansible Automation Platform</span></h2>
+          <h2><span class='badge ansible'>Ansible Automation Platform</span></h2>
           <table>
             <tr><th>Hostname</th><td>{{ ansible_hostname }}</td></tr>
             <tr><th>IP address</th><td>{{ ansible_default_ipv4.address }}</td></tr>
