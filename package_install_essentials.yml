@@ -7,10 +7,10 @@
 # These packages support day-to-day operations, scripting, and package
 # management tasks that all subsequent stages depend on.
 #
-# Note: curl-minimal is intentionally omitted from this list. AL2023 ships
-# it pre-installed on the base AMI and declaring it causes dnf depsolve
-# conflicts when other packages in the transaction pull in the full curl
-# as a transitive dependency. It is left under AMI-managed state.
+# Note: curl-minimal and gnupg2-minimal are intentionally omitted from this
+# list. AL2023 ships both pre-installed on the base AMI as *-minimal variants
+# that conflict with their full counterparts. Declaring either causes a dnf
+# depsolve error. Both are left under AMI-managed state.
 #
 # Packages:
 #   wget        - Non-interactive file downloader; preferred for scripted
@@ -31,8 +31,6 @@
 #                 useful for diagnosing interface and routing issues.
 #   ca-certificates - Trusted root Certificate Authority bundle; required for
 #                 TLS verification when dnf fetches from HTTPS repositories.
-#   gnupg2      - GNU Privacy Guard v2; verifies GPG signatures on repository
-#                 keys before packages are trusted and installed.
 # =============================================================================
 
 - name: "Stage 1 — Operational essentials"
@@ -58,7 +56,6 @@
           - vim-enhanced
           - net-tools
           - ca-certificates
-          - gnupg2
         state: present
 
     - name: Confirm git is available
