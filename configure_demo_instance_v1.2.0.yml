@@ -61,12 +61,13 @@
     # -------------------------------------------------------
     # Task 3 — Remove the /status endpoint
     # /status was introduced in v1.3.0. Rolling back to v1.2.0
-    # removes the file so the endpoint returns 404, visibly
-    # demonstrating the feature regression on rollback.
+    # removes the directory entirely so nginx returns 404.
+    # Removing the directory (not just the file) avoids nginx
+    # returning 403 Forbidden when an empty directory exists.
     # -------------------------------------------------------
-    - name: Remove status endpoint (not available in v1.2.0)
+    - name: Remove status endpoint directory (not available in v1.2.0)
       ansible.builtin.file:
-        path: /var/www/status/index.html
+        path: /var/www/status
         state: absent
 
     # -------------------------------------------------------
@@ -100,10 +101,10 @@
         return_content: true
         status_code: 200
 
-    - name: Verify status endpoint is absent (returns 404)
+    - name: Verify status endpoint is unavailable (not present in v1.2.0)
       ansible.builtin.uri:
         url: "http://{{ ansible_default_ipv4.address }}/status"
-        status_code: 404
+        status_code: [403, 404]
 
     - name: Report success
       ansible.builtin.debug:

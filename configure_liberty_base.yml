@@ -1,0 +1,179 @@
+---
+- name: Configure Liberty base image — deploy app + runtime config
+  hosts: all
+  become: true
+
+  vars:
+    app_version: "{{ app_version | default('unknown') }}"
+    aap_job_id: "{{ tower_job_id | default('unknown') }}"
+    liberty_war_path: /opt/ibm/wlp/usr/servers/defaultServer/apps/demo.war
+    liberty_s3_bucket: "{{ liberty_s3_bucket | default('ashscarbrough-temp-bucket') }}"
+
+  pre_tasks:
+    - name: Wait for SSH connection
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+          - hardware
+
+  tasks:
+
+    # -------------------------------------------------------
+    # App deployment — this is what makes the base path different
+    # Ansible owns the application lifecycle here
+    # -------------------------------------------------------
+    - name: Create demo.war directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: liberty
+        group: liberty
+        mode: '0755'
+      loop:
+        - "{{ liberty_war_path }}"
+        - "{{ liberty_war_path }}/status"
+
+    - name: Deploy application index page
+      ansible.builtin.copy:
+        dest: "{{ liberty_war_path }}/index.html"
+        owner: liberty
+        group: liberty
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head><title>WebSphere Liberty Demo — Base Image v{{ app_version }}</title>
+          <style>
+            body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;}
+            .badge{display:inline-block;padding:4px 12px;border-radius:4px;font-size:14px;margin:2px;}
+            .packer{background:#5C4EE5;color:white;}
+            .liberty{background:#0530AD;color:white;}
+            .ansible{background:#EE0000;color:white;}
+            .success{background:#28a745;color:white;}
+            table{border-collapse:collapse;width:100%;}
+            td,th{border:1px solid #ddd;padding:8px;text-align:left;}
+            th{background:#f2f2f2;}
+            h1{color:#0530AD;}
+            .note{background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:4px;margin:16px 0;}
+          </style></head>
+          <body>
+          <h1>IBM WebSphere Liberty + HashiCorp</h1>
+          <div class='note'>
+            <strong>Base Image Path</strong> — Liberty middleware was baked by HCP Packer.
+            This application was deployed at runtime by Ansible Automation Platform.
+          </div>
+          <h2>Image Details</h2>
+          <p>
+            <span class='badge packer'>HCP Packer</span>
+            <span class='badge liberty'>WebSphere Liberty</span>
+            <span class='badge ansible'>Ansible Automation Platform</span>
+          </p>
+          <table>
+            <tr><th>Image type</th><td><strong>Base (middleware only)</strong></td></tr>
+            <tr><th>App version</th><td><strong>{{ app_version }}</strong></td></tr>
+            <tr><th>Application deployed by</th><td><span class='badge ansible'>Ansible — at runtime</span></td></tr>
+            <tr><th>Liberty deployed by</th><td><span class='badge packer'>Packer — at build time</span></td></tr>
+          </table>
+          <h2>Runtime Configuration <span class='badge ansible'>Ansible Automation Platform</span></h2>
+          <table>
+            <tr><th>Hostname</th><td>{{ ansible_hostname }}</td></tr>
+            <tr><th>IP address</th><td>{{ ansible_default_ipv4.address }}</td></tr>
+            <tr><th>Total memory</th><td>{{ ansible_memtotal_mb }} MB</td></tr>
+            <tr><th>CPU cores</th><td>{{ ansible_processor_vcpus }}</td></tr>
+            <tr><th>AAP job ID</th><td>{{ aap_job_id }}</td></tr>
+            <tr><th>Deployed at</th><td>{{ ansible_date_time.iso8601 }}</td></tr>
+          </table>
+          <p>Visit <a href='/status'>/status</a> for health status.</p>
+          </body></html>
+        mode: '0644'
+
+    - name: Ensure app is wired into Liberty config
+      ansible.builtin.copy:
+        dest: /opt/ibm/wlp/usr/servers/defaultServer/configDropins/overrides/app.xml
+        owner: liberty
+        group: liberty
+        content: |
+          <server>
+              <webApplication id="demo"
+                              location="demo.war"
+                              contextRoot="/" />
+          </server>
+        mode: '0644'
+
+    # -------------------------------------------------------
+    # Start Liberty and validate
+    # -------------------------------------------------------
+    - name: Start Liberty service
+      ansible.builtin.systemd:
+        name: liberty
+        state: started
+        enabled: true
+
+    - name: Wait for Liberty to be ready
+      ansible.builtin.uri:
+        url: "http://localhost:9080/health"
+        status_code: 200
+      register: liberty_health
+      retries: 12
+      delay: 10
+      until: liberty_health.status == 200
+
+    - name: Write runtime status page
+      ansible.builtin.copy:
+        dest: "{{ liberty_war_path }}/status/index.html"
+        owner: liberty
+        group: liberty
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head><title>Status</title>
+          <style>body{font-family:monospace;max-width:800px;margin:40px auto;padding:0 20px;}
+          .ok{color:green;font-weight:bold;}</style></head>
+          <body>
+          <h1>Instance Status</h1>
+          <p>Status: <span class='ok'>HEALTHY</span></p>
+          <h2>Ansible Audit Trail</h2>
+          <pre>
+          Job ID    : {{ aap_job_id }}
+          Timestamp : {{ ansible_date_time.iso8601 }}
+          Host      : {{ ansible_hostname }}
+          IP        : {{ ansible_default_ipv4.address }}
+          Version   : {{ app_version }}
+          Path      : Base image (app deployed by Ansible)
+          </pre>
+          </body></html>
+        mode: '0644'
+
+    - name: Write audit file
+      ansible.builtin.copy:
+        dest: /etc/ansible-configured
+        content: |
+          Configured by Ansible Automation Platform
+          ==========================================
+          Path      : Base image (application deployed by Ansible)
+          Timestamp : {{ ansible_date_time.iso8601 }}
+          AAP job   : {{ aap_job_id }}
+          Version   : {{ app_version }}
+          Host      : {{ ansible_hostname }}
+        mode: '0644'
+
+    - name: Verify via ALB
+      ansible.builtin.uri:
+        url: "http://{{ alb_dns_name }}"
+        status_code: 200
+      retries: 6
+      delay: 10
+      delegate_on: localhost
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: >
+          Base image path — Liberty v{{ app_version }} live at
+          http://{{ alb_dns_name }} — deployed and configured by AAP job {{ aap_job_id }}

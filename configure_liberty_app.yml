@@ -1,0 +1,111 @@
+---
+- name: Configure Liberty app image — runtime layer only
+  hosts: all
+  become: true
+
+  vars:
+    app_version: "{{ app_version | default('unknown') }}"
+    aap_job_id: "{{ tower_job_id | default('unknown') }}"
+    liberty_war_path: /opt/ibm/wlp/usr/servers/defaultServer/apps/demo.war
+
+  pre_tasks:
+    - name: Wait for SSH connection
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Wait for cloud-init
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+          - hardware
+
+  tasks:
+
+    - name: Start Liberty service
+      ansible.builtin.systemd:
+        name: liberty
+        state: started
+        enabled: true
+
+    - name: Wait for Liberty to be ready
+      ansible.builtin.uri:
+        url: "http://localhost:9080/health"
+        status_code: 200
+      register: liberty_health
+      retries: 12
+      delay: 10
+      until: liberty_health.status == 200
+
+    - name: Inject runtime details into Packer-baked page
+      ansible.builtin.replace:
+        path: "{{ liberty_war_path }}/index.html"
+        regexp: "<p><span class='badge pending'>Pending AAP configuration\\.\\.\\.</span></p>"
+        replace: |
+          <div style="border-top:2px solid #EE0000;margin-top:20px;padding-top:20px;">
+          <h2>Runtime Configuration <span class='badge ansible'>Ansible Automation Platform</span></h2>
+          <table>
+            <tr><th>Hostname</th><td>{{ ansible_hostname }}</td></tr>
+            <tr><th>IP address</th><td>{{ ansible_default_ipv4.address }}</td></tr>
+            <tr><th>Total memory</th><td>{{ ansible_memtotal_mb }} MB</td></tr>
+            <tr><th>CPU cores</th><td>{{ ansible_processor_vcpus }}</td></tr>
+            <tr><th>AAP job ID</th><td>{{ aap_job_id }}</td></tr>
+            <tr><th>Configured at</th><td>{{ ansible_date_time.iso8601 }}</td></tr>
+          </table>
+          </div>
+
+    - name: Write runtime status page
+      ansible.builtin.copy:
+        dest: "{{ liberty_war_path }}/status/index.html"
+        owner: liberty
+        group: liberty
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head><title>Status</title>
+          <style>body{font-family:monospace;max-width:800px;margin:40px auto;padding:0 20px;}
+          .ok{color:green;font-weight:bold;}</style></head>
+          <body>
+          <h1>Instance Status</h1>
+          <p>Status: <span class='ok'>HEALTHY</span></p>
+          <h2>Ansible Audit Trail</h2>
+          <pre>
+          Job ID    : {{ aap_job_id }}
+          Timestamp : {{ ansible_date_time.iso8601 }}
+          Host      : {{ ansible_hostname }}
+          IP        : {{ ansible_default_ipv4.address }}
+          Version   : {{ app_version }}
+          Path      : App image (baked by Packer)
+          </pre>
+          </body></html>
+        mode: '0644'
+
+    - name: Write audit file
+      ansible.builtin.copy:
+        dest: /etc/ansible-configured
+        content: |
+          Configured by Ansible Automation Platform
+          ==========================================
+          Path      : App image (application baked by Packer)
+          Timestamp : {{ ansible_date_time.iso8601 }}
+          AAP job   : {{ aap_job_id }}
+          Version   : {{ app_version }}
+          Host      : {{ ansible_hostname }}
+        mode: '0644'
+
+    - name: Verify via ALB
+      ansible.builtin.uri:
+        url: "http://{{ alb_dns_name }}"
+        status_code: 200
+      retries: 6
+      delay: 10
+      delegate_to: localhost
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: >
+          App image path — Liberty v{{ app_version }} live at
+          http://{{ alb_dns_name }} — configured by AAP job {{ aap_job_id }}

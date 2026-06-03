@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# Stage 1 — Operational Essentials
+# Target: Amazon Linux 2023
+#
+# Installs the baseline toolchain that every provisioned VM should carry.
+# These packages support day-to-day operations, scripting, and package
+# management tasks that all subsequent stages depend on.
+#
+# Packages:
+#   curl        - Command-line HTTP client; used to fetch files, test endpoints,
+#                 and interact with REST APIs from the shell.
+#   wget        - Non-interactive file downloader; preferred for scripted
+#                 fetches where curl is unavailable or undesirable.
+#   git         - Distributed version control; required for cloning repos,
+#                 pulling config, and tracking infrastructure-as-code changes.
+#   jq          - Lightweight JSON processor; parses and transforms JSON output
+#                 from APIs and CLI tools directly in shell scripts.
+#   htop        - Interactive process viewer; provides a real-time, visual
+#                 overview of CPU, memory, and running processes.
+#   unzip       - Archive extraction utility; unpacks .zip archives commonly
+#                 used for distributing binaries and configuration bundles.
+#   vim-enhanced - Full-featured terminal text editor; enables in-place file
+#                 editing on the VM without requiring a GUI or file transfer.
+#                 AL2023 ships vim-enhanced rather than the bare vim package.
+#   net-tools   - Classic networking utilities (ifconfig, netstat, route);
+#                 useful for diagnosing interface and routing issues.
+#   ca-certificates - Trusted root Certificate Authority bundle; required for
+#                 TLS verification when dnf fetches from HTTPS repositories.
+#   gnupg2      - GNU Privacy Guard v2; verifies GPG signatures on repository
+#                 keys before packages are trusted and installed.
+# =============================================================================
+
+- name: "Stage 1 — Operational essentials"
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Update dnf cache and upgrade existing packages
+      ansible.builtin.dnf:
+        update_cache: true
+        name: "*"
+        state: latest
+
+    - name: Install operational essentials
+      ansible.builtin.dnf:
+        name:
+          - curl
+          - wget
+          - git
+          - jq
+          - htop
+          - unzip
+          - vim-enhanced
+          - net-tools
+          - ca-certificates
+          - gnupg2
+        state: present
+
+    - name: Confirm git is available
+      ansible.builtin.command: git --version
+      register: git_version
+      changed_when: false
+
+    - name: Print git version
+      ansible.builtin.debug:
+        msg: "{{ git_version.stdout }}"

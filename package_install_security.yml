@@ -1,0 +1,94 @@
+---
+# =============================================================================
+# Stage 2 — Security and Compliance Hardening
+# Target: Amazon Linux 2023
+#
+# Applies a baseline security posture to the VM. Configures a host firewall,
+# intrusion prevention for SSH, and system-call auditing to satisfy common
+# compliance requirements (CIS, SOC 2, internal policy gates).
+#
+# Packages:
+#   firewalld       - Dynamic firewall daemon; manages netfilter rules via
+#                     zones and services. The standard host firewall on AL2023,
+#                     replacing ufw which is Ubuntu-specific. Configured here
+#                     to permit only SSH and drop all other incoming traffic.
+#   fail2ban        - Intrusion prevention daemon; monitors log files for
+#                     repeated authentication failures and temporarily bans
+#                     offending IP addresses via firewall rules.
+#   audit           - Linux Audit daemon (auditd); records system calls, file
+#                     access, and privilege escalation events to a tamper-evident
+#                     log. Required by many compliance frameworks for traceability.
+#                     On AL2023, audispd-plugins are bundled within this package.
+#
+# Variables:
+#   fail2ban_maxretry  - Number of failed auth attempts before a ban is issued.
+#   fail2ban_bantime   - Duration in seconds an offending IP remains banned.
+# =============================================================================
+
+- name: "Stage 2 — Security and compliance hardening"
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    fail2ban_maxretry: 5
+    fail2ban_bantime: 3600
+
+  tasks:
+    - name: Install security packages
+      ansible.builtin.dnf:
+        name:
+          - firewalld
+          - fail2ban
+          - audit
+        state: present
+
+    - name: Enable and start firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        enabled: true
+        state: started
+
+    - name: Allow SSH through firewalld
+      ansible.posix.firewalld:
+        service: ssh
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Set default zone to drop all other incoming traffic
+      ansible.builtin.command: firewall-cmd --set-default-zone=drop
+      changed_when: false
+
+    - name: Deploy fail2ban SSH jail config
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/ssh.conf
+        mode: "0644"
+        content: |
+          [sshd]
+          enabled  = true
+          port     = ssh
+          maxretry = {{ fail2ban_maxretry }}
+          bantime  = {{ fail2ban_bantime }}
+      notify: Restart fail2ban
+
+    - name: Enable and start auditd
+      ansible.builtin.systemd:
+        name: auditd
+        enabled: true
+        state: started
+
+    - name: Check firewalld status
+      ansible.builtin.command: firewall-cmd --list-all
+      register: firewall_status
+      changed_when: false
+
+    - name: Print firewalld status
+      ansible.builtin.debug:
+        msg: "{{ firewall_status.stdout_lines }}"
+
+  handlers:
+    - name: Restart fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        state: restarted

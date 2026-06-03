@@ -1,0 +1,93 @@
+---
+# =============================================================================
+# Stage 3 — Runtime Support (Python and Docker)
+# Target: Amazon Linux 2023
+#
+# Installs the application runtimes that workloads running on this VM will
+# depend on. Python is pre-installed on AL2023 but pip and venv are not
+# included by default and must be added explicitly. Docker CE is sourced
+# from the official Docker repository for Amazon Linux, not the Ubuntu path.
+#
+# Packages:
+#   python3         - The Python 3 interpreter; ships with AL2023 but listed
+#                     here to ensure the correct version is present and managed
+#                     by dnf going forward.
+#   python3-pip     - Python package installer; fetches and manages libraries
+#                     from PyPI for use in scripts and applications.
+#   python3-virtualenv - Virtual environment support for Python; isolates
+#                     per-project dependencies from the system Python install.
+#                     AL2023 uses python3-virtualenv rather than python3-venv.
+#   docker-ce       - Docker Community Edition engine; builds and runs
+#                     containers from OCI-compliant images.
+#   docker-ce-cli   - Docker command-line interface; the primary tool for
+#                     managing images, containers, networks, and volumes.
+#   containerd.io   - Industry-standard container runtime that Docker CE
+#                     delegates to for low-level container lifecycle management.
+#
+# Variables:
+#   enable_docker   - Boolean gate; set to false to skip Docker installation
+#                     on VMs that only require the Python runtime.
+# =============================================================================
+
+- name: "Stage 3 — Runtime support (Python and Docker)"
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    enable_docker: true
+
+  tasks:
+    - name: Install Python 3 runtime
+      ansible.builtin.dnf:
+        name:
+          - python3
+          - python3-pip
+          - python3-virtualenv
+        state: present
+
+    - name: Confirm Python version
+      ansible.builtin.command: python3 --version
+      register: py_version
+      changed_when: false
+
+    - name: Print Python version
+      ansible.builtin.debug:
+        msg: "{{ py_version.stdout }}"
+
+    - name: Add Docker CE repository for Amazon Linux
+      when: enable_docker | bool
+      ansible.builtin.yum_repository:
+        name: docker-ce
+        description: Docker CE Stable - $basearch
+        baseurl: https://download.docker.com/linux/rhel/$releasever/$basearch/stable
+        gpgcheck: true
+        gpgkey: https://download.docker.com/linux/rhel/gpg
+        enabled: true
+
+    - name: Install Docker CE
+      when: enable_docker | bool
+      ansible.builtin.dnf:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: Enable and start Docker
+      when: enable_docker | bool
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Confirm Docker version
+      when: enable_docker | bool
+      ansible.builtin.command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Print Docker version
+      when: enable_docker | bool
+      ansible.builtin.debug:
+        msg: "{{ docker_version.stdout }}"

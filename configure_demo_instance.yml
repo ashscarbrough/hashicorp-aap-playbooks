@@ -51,6 +51,12 @@
     # Task 2 — Write the /status endpoint
     # This is pure runtime data — impossible to bake into image
     # -------------------------------------------------------
+    - name: Ensure status directory exists
+      ansible.builtin.file:
+        path: /var/www/status
+        state: directory
+        mode: '0755'
+
     - name: Write runtime status page
       ansible.builtin.copy:
         dest: /var/www/status/index.html

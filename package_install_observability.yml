@@ -1,0 +1,57 @@
+---
+- name: "Stage 4 — Observability (Prometheus node exporter and Fluent Bit)"
+  hosts: all
+  become: true
+  gather_facts: true
+ 
+  tasks:
+    - name: Install Prometheus node exporter
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+ 
+    - name: Enable and start node exporter
+      ansible.builtin.systemd:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+ 
+    - name: Add Fluent Bit GPG key
+      ansible.builtin.apt_key:
+        url: https://packages.fluentbit.io/fluentbit.key
+        state: present
+ 
+    - name: Add Fluent Bit apt repository
+      ansible.builtin.apt_repository:
+        repo: >
+          deb https://packages.fluentbit.io/ubuntu/{{ ansible_distribution_release }}
+          {{ ansible_distribution_release }} main
+        state: present
+        update_cache: true
+ 
+    - name: Install Fluent Bit
+      ansible.builtin.apt:
+        name: fluent-bit
+        state: present
+ 
+    - name: Enable and start Fluent Bit
+      ansible.builtin.systemd:
+        name: fluent-bit
+        enabled: true
+        state: started
+ 
+    - name: Verify node exporter is listening
+      ansible.builtin.wait_for:
+        port: 9100
+        timeout: 15
+ 
+    - name: Confirm node exporter metrics endpoint
+      ansible.builtin.uri:
+        url: http://localhost:9100/metrics
+        return_content: false
+        status_code: 200
+      register: metrics_check
+ 
+    - name: Print metrics endpoint status
+      ansible.builtin.debug:
+        msg: "Node exporter metrics endpoint responded {{ metrics_check.status }}"
