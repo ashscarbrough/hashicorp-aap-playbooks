@@ -8,8 +8,11 @@
 # management tasks that all subsequent stages depend on.
 #
 # Packages:
-#   curl        - Command-line HTTP client; used to fetch files, test endpoints,
-#                 and interact with REST APIs from the shell.
+#   curl-minimal - Stripped-down curl build shipped by default on AL2023;
+#                 listed explicitly so dnf confirms it is present without
+#                 conflicting with the curl-minimal package already installed.
+#                 Installing the full curl package causes a depsolve conflict
+#                 on AL2023 and should be avoided unless allowerasing is used.
 #   wget        - Non-interactive file downloader; preferred for scripted
 #                 fetches where curl is unavailable or undesirable.
 #   git         - Distributed version control; required for cloning repos,
@@ -46,7 +49,7 @@
     - name: Install operational essentials
       ansible.builtin.dnf:
         name:
-          - curl
+          - curl-minimal
           - wget
           - git
           - jq
