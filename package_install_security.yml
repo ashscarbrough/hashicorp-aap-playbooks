@@ -88,6 +88,7 @@
         port: 22
         timeout: 30
       delegate_to: localhost
+      become: false
 
   handlers:
     - name: Restart fail2ban
