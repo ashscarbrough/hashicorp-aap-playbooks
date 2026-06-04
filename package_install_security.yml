@@ -87,9 +87,13 @@
       ansible.builtin.command: firewall-cmd --set-default-zone=drop
       changed_when: false
 
-    - name: Reload firewalld to apply permanent rules
-      # Flush permanent config to the running config after all rules are set.
-      ansible.builtin.command: firewall-cmd --reload
+    - name: Promote running config to permanent
+      # Copies the current running config (which has all rules applied via
+      # immediate:true) into the permanent config. This is safer than
+      # firewall-cmd --reload, which does the opposite and would wipe the
+      # running rules back to whatever is on disk — losing any rules that
+      # did not persist correctly to the permanent config first.
+      ansible.builtin.command: firewall-cmd --runtime-to-permanent
       changed_when: false
 
     - name: Verify SSH is listed in active drop zone services
@@ -108,6 +112,9 @@
         dest: /etc/fail2ban/jail.d/ssh.conf
         mode: "0644"
         content: |
+          [DEFAULT]
+          ignoreip = 127.0.0.1/8 {{ ansible_env.SSH_CLIENT.split()[0] }}
+
           [sshd]
           enabled  = true
           port     = ssh
