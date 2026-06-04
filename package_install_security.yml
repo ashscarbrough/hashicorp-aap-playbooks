@@ -11,7 +11,8 @@
 #   firewalld       - Dynamic firewall daemon; manages netfilter rules via
 #                     zones and services. The standard host firewall on AL2023,
 #                     replacing ufw which is Ubuntu-specific. Configured here
-#                     to permit only SSH, HTTP, and HTTPS, and drop all other incoming traffic.
+#                     to permit SSH, HTTP, and HTTPS, dropping all other
+#                     incoming traffic.
 #   fail2ban        - Intrusion prevention daemon; monitors log files for
 #                     repeated authentication failures and temporarily bans
 #                     offending IP addresses via firewall rules.
@@ -23,6 +24,11 @@
 # Variables:
 #   fail2ban_maxretry  - Number of failed auth attempts before a ban is issued.
 #   fail2ban_bantime   - Duration in seconds an offending IP remains banned.
+#
+# Safety note: SSH is written directly into the firewalld zone config file
+# as a pre_task before the service is started. This prevents the window
+# where firewalld could start and block port 22 before the allow rule
+# is applied, which would make the instance unreachable mid-play.
 # =============================================================================
 
 - name: "Stage 2 — Security and compliance hardening"
@@ -34,11 +40,26 @@
     fail2ban_maxretry: 5
     fail2ban_bantime: 3600
 
+  pre_tasks:
+    - name: Ensure firewalld is installed before pre-configuring zones
+      ansible.builtin.dnf:
+        name: firewalld
+        state: present
+
+    - name: Pre-configure SSH in public zone before starting firewalld
+      # Writes the SSH service rule directly into the zone XML so it is
+      # present the moment firewalld starts, closing the lockout window.
+      ansible.builtin.lineinfile:
+        path: /etc/firewalld/zones/public.xml
+        insertafter: '<zone>'
+        line: '  <service name="ssh"/>'
+        create: false
+      ignore_errors: true
+
   tasks:
-    - name: Install security packages
+    - name: Install remaining security packages
       ansible.builtin.dnf:
         name:
-          - firewalld
           - fail2ban
           - audit
         state: present
