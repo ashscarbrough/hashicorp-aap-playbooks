@@ -93,30 +93,34 @@
         state: started
 
     # ------------------------------------------------------------------ #
-    #  Fluent Bit — direct RPM install                                     #
+    #  Fluent Bit                                                          #
     # ------------------------------------------------------------------ #
-    - name: Download Fluent Bit RPM for Amazon Linux 2023
-      ansible.builtin.get_url:
-        url: "https://packages.fluentbit.io/amazonlinux/2023/x86_64/fluent-bit-3.1.4-1.x86_64.rpm"
-        dest: "/tmp/fluent-bit.rpm"
+    - name: Write Fluent Bit yum repo file directly
+      # ansible.builtin.yum_repository does not write the repo file in a
+      # format dnf resolves correctly on AL2023. Writing the file directly
+      # matches the format from the official Fluent Bit documentation.
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/fluent-bit.repo
         mode: "0644"
+        content: |
+          [fluent-bit]
+          name = Fluent Bit
+          baseurl = https://packages.fluentbit.io/amazonlinux/2023/
+          gpgcheck=1
+          gpgkey=https://packages.fluentbit.io/fluentbit.key
+          enabled=1
 
-    - name: Install Fluent Bit RPM
+    - name: Install Fluent Bit
       ansible.builtin.dnf:
-        name: /tmp/fluent-bit.rpm
+        name: fluent-bit
         state: present
-        disable_gpg_check: true
+        update_cache: true
 
     - name: Enable and start Fluent Bit
       ansible.builtin.systemd:
         name: fluent-bit
         enabled: true
         state: started
-
-    - name: Clean up Fluent Bit RPM
-      ansible.builtin.file:
-        path: /tmp/fluent-bit.rpm
-        state: absent
 
     # ------------------------------------------------------------------ #
     #  Verification                                                        #
