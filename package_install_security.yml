@@ -31,6 +31,14 @@
     fail2ban_bantime: 3600
 
   tasks:
+    - name: Remove firewalld if present
+      # firewalld causes persistent SSH lockout issues on AL2023 due to
+      # zone/interface binding conflicts. Security Group rules handle
+      # network-level access control on EC2.
+      ansible.builtin.dnf:
+        name: firewalld
+        state: absent
+
     - name: Install security packages
       ansible.builtin.dnf:
         name:
@@ -44,7 +52,7 @@
         mode: "0644"
         content: |
           [DEFAULT]
-          ignoreip = 127.0.0.1/8 {{ ansible_env.SSH_CLIENT.split()[0] | default('') }}
+          ignoreip = 127.0.0.1/8 {{ ansible_env['SSH_CLIENT'].split()[0] if 'SSH_CLIENT' in ansible_env else '' }}
 
           [sshd]
           enabled  = true
