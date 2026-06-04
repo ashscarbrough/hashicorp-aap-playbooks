@@ -55,57 +55,50 @@
         enabled: true
         state: started
 
-    - name: Allow SSH through firewalld (drop zone)
-      # Applied immediately to the running config before any zone switch.
-      # immediate:true ensures the rule is live without a reload.
+    - name: Allow SSH through firewalld (public zone)
+      # Rules are applied to the public zone which is where eth0 is bound
+      # on AL2023 by default. Attempting to reassign zones or change the
+      # default zone causes interface binding issues that block SSH on
+      # subsequent playbook runs.
       ansible.posix.firewalld:
         service: ssh
-        zone: drop
+        zone: public
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Allow HTTP through firewalld (drop zone)
+    - name: Allow HTTP through firewalld (public zone)
       ansible.posix.firewalld:
         service: http
-        zone: drop
+        zone: public
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Allow HTTPS through firewalld (drop zone)
+    - name: Allow HTTPS through firewalld (public zone)
       ansible.posix.firewalld:
         service: https
-        zone: drop
+        zone: public
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Set default zone to drop
-      # All required service rules are already live in the drop zone above.
-      # Switching the default zone now is safe — SSH will not be interrupted.
-      ansible.builtin.command: firewall-cmd --set-default-zone=drop
-      changed_when: false
-
     - name: Promote running config to permanent
-      # Copies the current running config (which has all rules applied via
-      # immediate:true) into the permanent config. This is safer than
-      # firewall-cmd --reload, which does the opposite and would wipe the
-      # running rules back to whatever is on disk — losing any rules that
-      # did not persist correctly to the permanent config first.
+      # Persists the immediate rules to disk without a reload cycle.
       ansible.builtin.command: firewall-cmd --runtime-to-permanent
       changed_when: false
 
-    - name: Verify SSH is listed in active drop zone services
+    - name: Verify SSH is listed in active public zone services
       # Fails fast here rather than locking out the next playbook stage.
-      ansible.builtin.command: firewall-cmd --zone=drop --list-services
-      register: drop_zone_services
+      ansible.builtin.command: firewall-cmd --zone=public --list-services
+      register: public_zone_services
       changed_when: false
-      failed_when: "'ssh' not in drop_zone_services.stdout"
+      failed_when: "'ssh' not in public_zone_services.stdout"
 
-    - name: Print active drop zone services
+    - name: Print active public zone services
       ansible.builtin.debug:
-        msg: "Active drop zone services: {{ drop_zone_services.stdout }}"
+        msg: "Active public zone services: {{ public_zone_services.stdout }}"
+
 
     - name: Deploy fail2ban SSH jail config
       ansible.builtin.copy:
