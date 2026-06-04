@@ -93,27 +93,30 @@
         state: started
 
     # ------------------------------------------------------------------ #
-    #  Fluent Bit                                                          #
+    #  Fluent Bit — direct RPM install                                     #
     # ------------------------------------------------------------------ #
-    - name: Add Fluent Bit repository for Amazon Linux 2023
-      ansible.builtin.yum_repository:
-        name: fluent-bit
-        description: Fluent Bit
-        baseurl: https://packages.fluentbit.io/amazonlinux/2023/$basearch/
-        gpgcheck: true
-        gpgkey: https://packages.fluentbit.io/fluentbit.key
-        enabled: true
+    - name: Download Fluent Bit RPM for Amazon Linux 2023
+      ansible.builtin.get_url:
+        url: "https://packages.fluentbit.io/amazonlinux/2023/x86_64/fluent-bit-3.1.4-1.x86_64.rpm"
+        dest: "/tmp/fluent-bit.rpm"
+        mode: "0644"
 
-    - name: Install Fluent Bit
+    - name: Install Fluent Bit RPM
       ansible.builtin.dnf:
-        name: fluent-bit
+        name: /tmp/fluent-bit.rpm
         state: present
+        disable_gpg_check: true
 
     - name: Enable and start Fluent Bit
       ansible.builtin.systemd:
         name: fluent-bit
         enabled: true
         state: started
+
+    - name: Clean up Fluent Bit RPM
+      ansible.builtin.file:
+        path: /tmp/fluent-bit.rpm
+        state: absent
 
     # ------------------------------------------------------------------ #
     #  Verification                                                        #
