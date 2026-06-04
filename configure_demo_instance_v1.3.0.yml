@@ -2,19 +2,21 @@
 - name: Configure demo instance — AAP runtime layer
   hosts: all
   become: true
+  gather_facts: false        # REQUIRED — prevents implicit fact gathering
+                             # before pre_tasks run. Without this, Ansible
+                             # attempts SSH before the wait logic executes,
+                             # causing Connection refused on new instances.
 
   vars:
-    config_version: "1.3---.0"
+    config_version: "1.3.0"
     aap_job_id: "{{ tower_job_id | default('unknown') }}"
     aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
   pre_tasks:
     - name: Wait for port 22 to be open
       # Runs on the AAP controller, not the target host.
-      # Polls until port 22 accepts connections — handles both
-      # "Connection refused" (sshd not yet started) and
-      # "Connection timed out" (EIP not yet reassigned).
-      # Does not fail on refused connections, just keeps retrying.
+      # Tolerates both Connection refused (sshd not yet started) and
+      # Connection timed out (EIP not yet reassigned to new instance).
       ansible.builtin.wait_for:
         host: "{{ ansible_host | default(inventory_hostname) }}"
         port: 22
@@ -24,20 +26,25 @@
         sleep: 10
       delegate_to: localhost
       become: false
- 
+
     - name: Wait for SSH connection to be fully functional
-      # Now that port 22 is open, wait for a full SSH handshake.
-      # delay:0 here since we already waited above.
+      # Port 22 is open — now confirm full SSH handshake succeeds.
       ansible.builtin.wait_for_connection:
         delay: 0
         timeout: 120
         sleep: 10
         connect_timeout: 10
- 
+
     - name: Wait for cloud-init to complete
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
- 
+
+    - name: Gather facts
+      # Collected here after SSH is confirmed ready, replacing the
+      # implicit gather_facts disabled in the play header.
+      # Superset of the setup task below — the network/hardware subset
+      # task in tasks: is now redundant and can be removed if desired.
+      ansible.builtin.gather_facts:
 
   tasks:
 
@@ -45,12 +52,6 @@
     # Task 1 — Update the version page with live runtime info
     # Shows: Packer baked the base, Ansible knows the runtime
     # -------------------------------------------------------
-    - name: Gather instance facts
-      ansible.builtin.setup:
-        gather_subset:
-          - network
-          - hardware
-
     - name: Inject runtime details into existing Packer page
       ansible.builtin.blockinfile:
         path: /usr/share/nginx/html/index.html
