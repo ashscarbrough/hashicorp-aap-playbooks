@@ -11,7 +11,7 @@
 #   firewalld       - Dynamic firewall daemon; manages netfilter rules via
 #                     zones and services. The standard host firewall on AL2023,
 #                     replacing ufw which is Ubuntu-specific. Configured here
-#                     to permit only SSH and drop all other incoming traffic.
+#                     to permit only SSH, HTTP, and HTTPS, and drop all other incoming traffic.
 #   fail2ban        - Intrusion prevention daemon; monitors log files for
 #                     repeated authentication failures and temporarily bans
 #                     offending IP addresses via firewall rules.
@@ -52,6 +52,20 @@
     - name: Allow SSH through firewalld
       ansible.posix.firewalld:
         service: ssh
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Allow HTTP through firewalld
+      ansible.posix.firewalld:
+        service: http
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Allow HTTPS through firewalld
+      ansible.posix.firewalld:
+        service: https
         permanent: true
         state: enabled
         immediate: true
