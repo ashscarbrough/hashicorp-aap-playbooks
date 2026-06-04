@@ -13,16 +13,10 @@
 # depsolve error. Both are left under AMI-managed state.
 #
 # Packages:
-#   wget        - Non-interactive file downloader; preferred for scripted
-#                 fetches where curl is unavailable or undesirable.
 #   git         - Distributed version control; required for cloning repos,
 #                 pulling config, and tracking infrastructure-as-code changes.
-#   jq          - Lightweight JSON processor; parses and transforms JSON output
-#                 from APIs and CLI tools directly in shell scripts.
 #   htop        - Interactive process viewer; provides a real-time, visual
 #                 overview of CPU, memory, and running processes.
-#   unzip       - Archive extraction utility; unpacks .zip archives commonly
-#                 used for distributing binaries and configuration bundles.
 #   vim-enhanced - Full-featured terminal text editor; enables in-place file
 #                 editing on the VM without requiring a GUI or file transfer.
 #                 AL2023 ships vim-minimal by default; vim-enhanced installs
@@ -48,11 +42,8 @@
     - name: Install operational essentials
       ansible.builtin.dnf:
         name:
-          - wget
           - git
-          - jq
           - htop
-          - unzip
           - vim-enhanced
           - net-tools
           - ca-certificates

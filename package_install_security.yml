@@ -11,10 +11,6 @@
 #   fail2ban        - Intrusion prevention daemon; monitors log files for
 #                     repeated authentication failures and temporarily bans
 #                     offending IP addresses via firewall rules.
-#   audit           - Linux Audit daemon (auditd); records system calls, file
-#                     access, and privilege escalation events to a tamper-evident
-#                     log. Required by many compliance frameworks for traceability.
-#                     On AL2023, audispd-plugins are bundled within this package.
 #
 # Variables:
 #   fail2ban_maxretry  - Number of failed auth attempts before a ban is issued.
@@ -43,7 +39,6 @@
       ansible.builtin.dnf:
         name:
           - fail2ban
-          - audit
         state: present
 
     - name: Deploy fail2ban SSH jail config
@@ -64,12 +59,6 @@
     - name: Enable and start fail2ban
       ansible.builtin.systemd:
         name: fail2ban
-        enabled: true
-        state: started
-
-    - name: Enable and start auditd
-      ansible.builtin.systemd:
-        name: auditd
         enabled: true
         state: started
 
