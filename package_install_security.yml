@@ -24,7 +24,7 @@
 - name: "Stage 2 — Security and compliance hardening"
   hosts: all
   become: true
-  gather_facts: false
+  gather_facts: true
 
   vars:
     fail2ban_maxretry: 5
@@ -44,7 +44,7 @@
         mode: "0644"
         content: |
           [DEFAULT]
-          ignoreip = 127.0.0.1/8 {{ ansible_env.SSH_CLIENT.split()[0] }}
+          ignoreip = 127.0.0.1/8 {{ ansible_env.SSH_CLIENT.split()[0] | default('') }}
 
           [sshd]
           enabled  = true
