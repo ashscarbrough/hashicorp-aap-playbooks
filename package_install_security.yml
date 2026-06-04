@@ -3,16 +3,11 @@
 # Stage 2 — Security and Compliance Hardening
 # Target: Amazon Linux 2023
 #
-# Applies a baseline security posture to the VM. Configures a host firewall,
-# intrusion prevention for SSH, and system-call auditing to satisfy common
-# compliance requirements (CIS, SOC 2, internal policy gates).
+# Applies a baseline security posture to the VM. Host-level network filtering
+# is intentionally omitted — access control is handled at the AWS Security
+# Group layer. This playbook focuses on intrusion prevention and audit logging.
 #
 # Packages:
-#   firewalld       - Dynamic firewall daemon; manages netfilter rules via
-#                     zones and services. The standard host firewall on AL2023,
-#                     replacing ufw which is Ubuntu-specific. Configured here
-#                     to permit SSH, HTTP, and HTTPS, dropping all other
-#                     incoming traffic.
 #   fail2ban        - Intrusion prevention daemon; monitors log files for
 #                     repeated authentication failures and temporarily bans
 #                     offending IP addresses via firewall rules.
@@ -24,11 +19,6 @@
 # Variables:
 #   fail2ban_maxretry  - Number of failed auth attempts before a ban is issued.
 #   fail2ban_bantime   - Duration in seconds an offending IP remains banned.
-#
-# Safety note: All three service rules (SSH, HTTP, HTTPS) are applied to the
-# drop zone with immediate:true before any reload or restart occurs. The play
-# ends with an explicit SSH connectivity verification so any lockout is caught
-# immediately rather than discovered when the next playbook runs.
 # =============================================================================
 
 - name: "Stage 2 — Security and compliance hardening"
@@ -41,64 +31,20 @@
     fail2ban_bantime: 3600
 
   tasks:
+    - name: Remove firewalld if present
+      # firewalld causes persistent SSH lockout issues on AL2023 due to
+      # zone/interface binding conflicts. Security Group rules handle
+      # network-level access control on EC2.
+      ansible.builtin.dnf:
+        name: firewalld
+        state: absent
+
     - name: Install security packages
       ansible.builtin.dnf:
         name:
-          - firewalld
           - fail2ban
           - audit
         state: present
-
-    - name: Enable and start firewalld
-      ansible.builtin.systemd:
-        name: firewalld
-        enabled: true
-        state: started
-
-    - name: Allow SSH through firewalld (public zone)
-      # Rules are applied to the public zone which is where eth0 is bound
-      # on AL2023 by default. Attempting to reassign zones or change the
-      # default zone causes interface binding issues that block SSH on
-      # subsequent playbook runs.
-      ansible.posix.firewalld:
-        service: ssh
-        zone: public
-        permanent: true
-        state: enabled
-        immediate: true
-
-    - name: Allow HTTP through firewalld (public zone)
-      ansible.posix.firewalld:
-        service: http
-        zone: public
-        permanent: true
-        state: enabled
-        immediate: true
-
-    - name: Allow HTTPS through firewalld (public zone)
-      ansible.posix.firewalld:
-        service: https
-        zone: public
-        permanent: true
-        state: enabled
-        immediate: true
-
-    - name: Promote running config to permanent
-      # Persists the immediate rules to disk without a reload cycle.
-      ansible.builtin.command: firewall-cmd --runtime-to-permanent
-      changed_when: false
-
-    - name: Verify SSH is listed in active public zone services
-      # Fails fast here rather than locking out the next playbook stage.
-      ansible.builtin.command: firewall-cmd --zone=public --list-services
-      register: public_zone_services
-      changed_when: false
-      failed_when: "'ssh' not in public_zone_services.stdout"
-
-    - name: Print active public zone services
-      ansible.builtin.debug:
-        msg: "Active public zone services: {{ public_zone_services.stdout }}"
-
 
     - name: Deploy fail2ban SSH jail config
       ansible.builtin.copy:
@@ -115,15 +61,28 @@
           bantime  = {{ fail2ban_bantime }}
       notify: Restart fail2ban
 
+    - name: Enable and start fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
     - name: Enable and start auditd
       ansible.builtin.systemd:
         name: auditd
         enabled: true
         state: started
 
+    - name: Verify fail2ban is running
+      ansible.builtin.command: fail2ban-client status
+      register: fail2ban_status
+      changed_when: false
+
+    - name: Print fail2ban status
+      ansible.builtin.debug:
+        msg: "{{ fail2ban_status.stdout_lines }}"
+
     - name: Verify SSH port is still reachable from control node
-      # Final end-to-end check — confirms the instance is still accessible
-      # after all firewall changes have been applied and reloaded.
       ansible.builtin.wait_for:
         host: "{{ ansible_host | default(inventory_hostname) }}"
         port: 22
