@@ -46,15 +46,23 @@
         name: firewalld
         state: present
 
+    - name: Check if firewalld public zone file already exists
+      # The zone file only exists if firewalld has been started before.
+      # On a fresh instance it will not be present, so we skip the
+      # pre-configuration and rely on firewalld's default SSH allowance.
+      ansible.builtin.stat:
+        path: /etc/firewalld/zones/public.xml
+      register: firewalld_zone_file
+
     - name: Pre-configure SSH in public zone before starting firewalld
-      # Writes the SSH service rule directly into the zone XML so it is
-      # present the moment firewalld starts, closing the lockout window.
+      # Only runs on re-runs where the zone file already exists.
+      # Ensures SSH is present in the config before firewalld restarts,
+      # closing the lockout window on subsequent provisioning attempts.
       ansible.builtin.lineinfile:
         path: /etc/firewalld/zones/public.xml
         insertafter: '<zone>'
         line: '  <service name="ssh"/>'
-        create: false
-      ignore_errors: true
+      when: firewalld_zone_file.stat.exists
 
   tasks:
     - name: Install remaining security packages
@@ -70,28 +78,46 @@
         enabled: true
         state: started
 
-    - name: Allow SSH through firewalld
+    - name: Bind eth0 interface to public zone
+      # Must happen before setting the default zone to drop.
+      # Without this, setting the default to drop orphans the interface
+      # in the drop zone where no service rules exist, blocking all traffic
+      # including SSH, HTTP, and HTTPS even though those rules are defined
+      # in the public zone.
+      ansible.posix.firewalld:
+        zone: public
+        interface: eth0
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Allow SSH through firewalld (public zone)
       ansible.posix.firewalld:
         service: ssh
+        zone: public
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Allow HTTP through firewalld
+    - name: Allow HTTP through firewalld (public zone)
       ansible.posix.firewalld:
         service: http
+        zone: public
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Allow HTTPS through firewalld
+    - name: Allow HTTPS through firewalld (public zone)
       ansible.posix.firewalld:
         service: https
+        zone: public
         permanent: true
         state: enabled
         immediate: true
 
     - name: Set default zone to drop all other incoming traffic
+      # Safe to set after eth0 is explicitly bound to public above.
+      # New interfaces will land in drop by default; only eth0 is in public.
       ansible.builtin.command: firewall-cmd --set-default-zone=drop
       changed_when: false
 
