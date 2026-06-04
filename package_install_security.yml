@@ -31,14 +31,6 @@
     fail2ban_bantime: 3600
 
   tasks:
-    - name: Remove firewalld if present
-      # firewalld causes persistent SSH lockout issues on AL2023 due to
-      # zone/interface binding conflicts. Security Group rules handle
-      # network-level access control on EC2.
-      ansible.builtin.dnf:
-        name: firewalld
-        state: absent
-
     - name: Install security packages
       ansible.builtin.dnf:
         name:
