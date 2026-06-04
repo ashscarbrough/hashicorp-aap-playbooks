@@ -4,14 +4,17 @@
   become: true
 
   vars:
-    config_version: "1.3.0"
+    config_version: "1.3---.0"
     aap_job_id: "{{ tower_job_id | default('unknown') }}"
     aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
   pre_tasks:
     - name: Wait for SSH connection
       ansible.builtin.wait_for_connection:
+        delay: 30        # don't even try for the first 30 seconds
         timeout: 300
+        sleep: 10        # retry every 10 seconds
+        connect_timeout: 10
 
     - name: Wait for cloud-init to complete
       ansible.builtin.command: cloud-init status --wait

@@ -25,10 +25,10 @@
 #   fail2ban_maxretry  - Number of failed auth attempts before a ban is issued.
 #   fail2ban_bantime   - Duration in seconds an offending IP remains banned.
 #
-# Safety note: SSH is written directly into the firewalld zone config file
-# as a pre_task before the service is started. This prevents the window
-# where firewalld could start and block port 22 before the allow rule
-# is applied, which would make the instance unreachable mid-play.
+# Safety note: All three service rules (SSH, HTTP, HTTPS) are applied to the
+# drop zone with immediate:true before any reload or restart occurs. The play
+# ends with an explicit SSH connectivity verification so any lockout is caught
+# immediately rather than discovered when the next playbook runs.
 # =============================================================================
 
 - name: "Stage 2 — Security and compliance hardening"
@@ -40,34 +40,11 @@
     fail2ban_maxretry: 5
     fail2ban_bantime: 3600
 
-  pre_tasks:
-    - name: Ensure firewalld is installed before pre-configuring zones
-      ansible.builtin.dnf:
-        name: firewalld
-        state: present
-
-    - name: Check if firewalld public zone file already exists
-      # The zone file only exists if firewalld has been started before.
-      # On a fresh instance it will not be present, so we skip the
-      # pre-configuration and rely on firewalld's default SSH allowance.
-      ansible.builtin.stat:
-        path: /etc/firewalld/zones/public.xml
-      register: firewalld_zone_file
-
-    - name: Pre-configure SSH in public zone before starting firewalld
-      # Only runs on re-runs where the zone file already exists.
-      # Ensures SSH is present in the config before firewalld restarts,
-      # closing the lockout window on subsequent provisioning attempts.
-      ansible.builtin.lineinfile:
-        path: /etc/firewalld/zones/public.xml
-        insertafter: '<zone>'
-        line: '  <service name="ssh"/>'
-      when: firewalld_zone_file.stat.exists
-
   tasks:
-    - name: Install remaining security packages
+    - name: Install security packages
       ansible.builtin.dnf:
         name:
+          - firewalld
           - fail2ban
           - audit
         state: present
@@ -78,48 +55,53 @@
         enabled: true
         state: started
 
-    - name: Bind eth0 interface to public zone
-      # Must happen before setting the default zone to drop.
-      # Without this, setting the default to drop orphans the interface
-      # in the drop zone where no service rules exist, blocking all traffic
-      # including SSH, HTTP, and HTTPS even though those rules are defined
-      # in the public zone.
-      ansible.posix.firewalld:
-        zone: public
-        interface: eth0
-        permanent: true
-        state: enabled
-        immediate: true
-
-    - name: Allow SSH through firewalld (public zone)
+    - name: Allow SSH through firewalld (drop zone)
+      # Applied immediately to the running config before any zone switch.
+      # immediate:true ensures the rule is live without a reload.
       ansible.posix.firewalld:
         service: ssh
-        zone: public
+        zone: drop
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Allow HTTP through firewalld (public zone)
+    - name: Allow HTTP through firewalld (drop zone)
       ansible.posix.firewalld:
         service: http
-        zone: public
+        zone: drop
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Allow HTTPS through firewalld (public zone)
+    - name: Allow HTTPS through firewalld (drop zone)
       ansible.posix.firewalld:
         service: https
-        zone: public
+        zone: drop
         permanent: true
         state: enabled
         immediate: true
 
-    - name: Set default zone to drop all other incoming traffic
-      # Safe to set after eth0 is explicitly bound to public above.
-      # New interfaces will land in drop by default; only eth0 is in public.
+    - name: Set default zone to drop
+      # All required service rules are already live in the drop zone above.
+      # Switching the default zone now is safe — SSH will not be interrupted.
       ansible.builtin.command: firewall-cmd --set-default-zone=drop
       changed_when: false
+
+    - name: Reload firewalld to apply permanent rules
+      # Flush permanent config to the running config after all rules are set.
+      ansible.builtin.command: firewall-cmd --reload
+      changed_when: false
+
+    - name: Verify SSH is listed in active drop zone services
+      # Fails fast here rather than locking out the next playbook stage.
+      ansible.builtin.command: firewall-cmd --zone=drop --list-services
+      register: drop_zone_services
+      changed_when: false
+      failed_when: "'ssh' not in drop_zone_services.stdout"
+
+    - name: Print active drop zone services
+      ansible.builtin.debug:
+        msg: "Active drop zone services: {{ drop_zone_services.stdout }}"
 
     - name: Deploy fail2ban SSH jail config
       ansible.builtin.copy:
@@ -139,14 +121,14 @@
         enabled: true
         state: started
 
-    - name: Check firewalld status
-      ansible.builtin.command: firewall-cmd --list-all
-      register: firewall_status
-      changed_when: false
-
-    - name: Print firewalld status
-      ansible.builtin.debug:
-        msg: "{{ firewall_status.stdout_lines }}"
+    - name: Verify SSH port is still reachable from control node
+      # Final end-to-end check — confirms the instance is still accessible
+      # after all firewall changes have been applied and reloaded.
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 22
+        timeout: 30
+      delegate_to: localhost
 
   handlers:
     - name: Restart fail2ban
