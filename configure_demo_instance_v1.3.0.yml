@@ -9,16 +9,35 @@
     aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
   pre_tasks:
-    - name: Wait for SSH connection
-      ansible.builtin.wait_for_connection:
-        delay: 30        # don't even try for the first 30 seconds
+    - name: Wait for port 22 to be open
+      # Runs on the AAP controller, not the target host.
+      # Polls until port 22 accepts connections — handles both
+      # "Connection refused" (sshd not yet started) and
+      # "Connection timed out" (EIP not yet reassigned).
+      # Does not fail on refused connections, just keeps retrying.
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 22
+        state: started
+        delay: 15
         timeout: 300
-        sleep: 10        # retry every 10 seconds
+        sleep: 10
+      delegate_to: localhost
+      become: false
+ 
+    - name: Wait for SSH connection to be fully functional
+      # Now that port 22 is open, wait for a full SSH handshake.
+      # delay:0 here since we already waited above.
+      ansible.builtin.wait_for_connection:
+        delay: 0
+        timeout: 120
+        sleep: 10
         connect_timeout: 10
-
+ 
     - name: Wait for cloud-init to complete
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
+ 
 
   tasks:
 
