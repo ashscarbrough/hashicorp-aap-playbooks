@@ -13,38 +13,20 @@
     aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
   pre_tasks:
-    - name: Wait for port 22 to be open
-      # Runs on the AAP controller, not the target host.
-      # Tolerates both Connection refused (sshd not yet started) and
-      # Connection timed out (EIP not yet reassigned to new instance).
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host | default(inventory_hostname) }}"
-        port: 22
-        state: started
-        delay: 30
-        timeout: 300
-        sleep: 10
-      delegate_to: localhost
-      become: false
-
-    - name: Wait for SSH connection to be fully functional
-      # Port 22 is open — now confirm full SSH handshake succeeds.
+    - name: Wait for SSM connectivity
       ansible.builtin.wait_for_connection:
-        delay: 0
-        timeout: 120
-        sleep: 10
-        connect_timeout: 10
+        timeout: 600
+        delay: 30
+        sleep: 15
+        connect_timeout: 30
 
     - name: Wait for cloud-init to complete
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
-
-    - name: Gather facts
-      # Collected here after SSH is confirmed ready, replacing the
-      # implicit gather_facts disabled in the play header.
-      # Superset of the setup task below — the network/hardware subset
-      # task in tasks: is now redundant and can be removed if desired.
-      ansible.builtin.gather_facts:
+      register: cloud_init_status
+      retries: 5
+      delay: 15
+      until: cloud_init_status.rc == 0
 
   tasks:
 
