@@ -1,20 +1,12 @@
 ---
-- name: Install packages dynamically with optional version pinning
+- name: Install packages dynamically
   hosts: all
   become: true
 
   vars:
-    packages: "{{ packages | default([]) }}"
+    packages_list: "{{ packages | default([]) }}"
 
-  pre_tasks:
-    - name: Wait for SSH connection
-      ansible.builtin.wait_for_connection:
-        timeout: 300
-
-    - name: Wait for cloud-init
-      ansible.builtin.command: cloud-init status --wait
-      changed_when: false
-
+  tasks:
   tasks:
     - name: Debug all variables
       ansible.builtin.debug:
@@ -23,13 +15,13 @@
     - name: Fail if no packages provided
       ansible.builtin.fail:
         msg: "No packages specified. Pass a 'packages' list as an extra variable."
-      when: packages | length == 0
+      when: packages_list | length == 0
 
     - name: Install packages without version pinning
       ansible.builtin.dnf:
         name: "{{ item.name }}"
         state: present
-      loop: "{{ packages | selectattr('version', 'undefined') | list }}"
+      loop: "{{ packages_list | selectattr('version', 'undefined') | list }}"
       loop_control:
         label: "{{ item.name }}"
 
@@ -37,20 +29,10 @@
       ansible.builtin.dnf:
         name: "{{ item.name }}-{{ item.version }}"
         state: present
-      loop: "{{ packages | selectattr('version', 'defined') | list }}"
+      loop: "{{ packages_list | selectattr('version', 'defined') | list }}"
       loop_control:
         label: "{{ item.name }}-{{ item.version }}"
 
-    - name: Build installed package summary
-      ansible.builtin.set_fact:
-        installed_summary: >-
-          {{
-            packages | map(attribute='name') | list
-            | zip(packages | map(attribute='version', default='latest') | list)
-            | map('join', '@')
-            | list
-          }}
-
     - name: Report installed packages
       ansible.builtin.debug:
-        msg: "Successfully installed: {{ installed_summary | join(', ') }}"
+        msg: "Successfully installed: {{ packages_list | map(attribute='name') | join(', ') }}"
