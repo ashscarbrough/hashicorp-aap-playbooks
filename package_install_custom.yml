@@ -8,9 +8,6 @@
 
   tasks:
   tasks:
-    - name: Debug all variables
-      ansible.builtin.debug:
-        msg: "packages = {{ packages | default('NOT SET') }}"
 
     - name: Fail if no packages provided
       ansible.builtin.fail:
@@ -21,7 +18,7 @@
       ansible.builtin.dnf:
         name: "{{ item.name }}"
         state: present
-      loop: "{{ packages_list | selectattr('version', 'undefined') | list }}"
+      loop: "{{ packages_list | selectattr('version', 'undefined') | list + packages_list | selectattr('version', 'equalto', None) | list }}"
       loop_control:
         label: "{{ item.name }}"
 
@@ -29,7 +26,7 @@
       ansible.builtin.dnf:
         name: "{{ item.name }}-{{ item.version }}"
         state: present
-      loop: "{{ packages_list | selectattr('version', 'defined') | list }}"
+      loop: "{{ packages_list | selectattr('version', 'defined') | selectattr('version', 'ne', None) | list }}"
       loop_control:
         label: "{{ item.name }}-{{ item.version }}"
 
