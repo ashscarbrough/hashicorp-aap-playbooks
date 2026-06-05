@@ -21,7 +21,7 @@
         host: "{{ ansible_host | default(inventory_hostname) }}"
         port: 22
         state: started
-        delay: 15
+        delay: 30
         timeout: 300
         sleep: 10
       delegate_to: localhost
