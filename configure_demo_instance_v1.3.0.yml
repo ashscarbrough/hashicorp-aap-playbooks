@@ -40,9 +40,10 @@
       when: aws_cli_check.rc != 0
 
     - name: Check if SSM plugin is already installed
-      ansible.builtin.command: session-manager-plugin --version
+      ansible.builtin.shell: which session-manager-plugin && session-manager-plugin --version
       register: ssm_plugin_check
       ignore_errors: true
+      failed_when: false
       delegate_to: localhost
       become: false
 
