@@ -13,20 +13,37 @@
     aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
   pre_tasks:
-    - name: Wait for SSM connectivity
-      ansible.builtin.wait_for_connection:
-        timeout: 600
-        delay: 30
-        sleep: 15
-        connect_timeout: 30
+  - name: Install AWS CLI and SSM prerequisites
+    ansible.builtin.dnf:
+      name:
+        - awscli
+        - python3-boto3
+        - python3-botocore
+      state: present
+    delegate_to: localhost
+    become: false
 
-    - name: Wait for cloud-init to complete
-      ansible.builtin.command: cloud-init status --wait
-      changed_when: false
-      register: cloud_init_status
-      retries: 5
-      delay: 15
-      until: cloud_init_status.rc == 0
+  - name: Install SSM Session Manager plugin
+    ansible.builtin.shell: |
+      curl -sL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm" \
+        -o /tmp/session-manager-plugin.rpm
+      dnf install -y /tmp/session-manager-plugin.rpm
+      rm -f /tmp/session-manager-plugin.rpm
+    delegate_to: localhost
+    become: false
+    args:
+      creates: /usr/local/sessionmanagerplugin/bin/session-manager-plugin
+
+  - name: Wait for SSM connectivity
+    ansible.builtin.wait_for_connection:
+      timeout: 600
+      delay: 30
+      sleep: 15
+      connect_timeout: 30
+
+  - name: Wait for cloud-init to complete
+    ansible.builtin.command: cloud-init status --wait
+    changed_when: false
 
   tasks:
 
