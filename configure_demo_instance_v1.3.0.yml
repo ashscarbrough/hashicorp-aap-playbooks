@@ -64,6 +64,13 @@
       become: false
       ignore_errors: true
 
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+          - hardware
+          - virtual
+
   tasks:
 
     # -------------------------------------------------------
