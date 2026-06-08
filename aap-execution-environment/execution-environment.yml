@@ -1,0 +1,31 @@
+version: 3
+
+images:
+  base_image:
+    name: registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9:latest
+
+dependencies:
+  galaxy: requirements.yml
+  python: requirements.txt
+  system: bindep.txt
+
+options:
+  package_manager_path: /usr/bin/microdnf
+
+additional_build_steps:
+  prepend_galaxy:
+    - ENV ANSIBLE_GALAXY_SERVER_SSL_VERIFY=false
+
+  append_final:
+    - >-
+      RUN curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+      -o /tmp/awscliv2.zip &&
+      unzip -q /tmp/awscliv2.zip -d /tmp/ &&
+      /tmp/aws/install &&
+      rm -rf /tmp/aws /tmp/awscliv2.zip
+    - >-
+      RUN curl -sL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm"
+      -o /tmp/session-manager-plugin.rpm &&
+      rpm -i /tmp/session-manager-plugin.rpm &&
+      rm -f /tmp/session-manager-plugin.rpm
+    - RUN aws --version && session-manager-plugin --version

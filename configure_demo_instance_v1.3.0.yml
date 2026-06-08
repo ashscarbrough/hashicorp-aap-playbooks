@@ -1,51 +1,40 @@
 ---
-- name: Configure demo instance — AAP runtime layer
-  hosts: all
-  become: true
-  gather_facts: false        # REQUIRED — prevents implicit fact gathering
-                             # before pre_tasks run. Without this, Ansible
-                             # attempts SSH before the wait logic executes,
-                             # causing Connection refused on new instances.
+# -------------------------------------------------------
+# Play 1 — Prepare execution environment on AAP runner
+# Installs AWS CLI, SSM plugin, and community.aws collection
+# on the AAP execution pod before Play 2 uses SSM connection
+# -------------------------------------------------------
+- name: Prepare execution environment
+  hosts: localhost
+  connection: local
+  gather_facts: false
 
-  vars:
-    config_version: "1.3.0"
-    aap_job_id: "{{ tower_job_id | default('unknown') }}"
-    aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
-
-  pre_tasks:
+  tasks:
     - name: Install boto3 and botocore via pip
       ansible.builtin.pip:
         name:
           - boto3
           - botocore
         state: present
-      delegate_to: localhost
-      become: false
 
     - name: Check if AWS CLI is already installed
-      ansible.builtin.command: aws --version
+      ansible.builtin.shell: which aws && aws --version
       register: aws_cli_check
-      ignore_errors: true
-      delegate_to: localhost
-      become: false
+      failed_when: false
 
     - name: Install AWS CLI if not present
       ansible.builtin.shell: |
-        curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+        curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+          -o /tmp/awscliv2.zip
         unzip -q /tmp/awscliv2.zip -d /tmp/
         /tmp/aws/install --update
         rm -rf /tmp/aws /tmp/awscliv2.zip
-      delegate_to: localhost
-      become: false
       when: aws_cli_check.rc != 0
 
     - name: Check if SSM plugin is already installed
       ansible.builtin.shell: which session-manager-plugin && session-manager-plugin --version
       register: ssm_plugin_check
-      ignore_errors: true
       failed_when: false
-      delegate_to: localhost
-      become: false
 
     - name: Install SSM Session Manager plugin if not present
       ansible.builtin.shell: |
@@ -53,16 +42,46 @@
           -o /tmp/session-manager-plugin.rpm
         rpm -i /tmp/session-manager-plugin.rpm
         rm -f /tmp/session-manager-plugin.rpm
-      delegate_to: localhost
-      become: false
       when: ssm_plugin_check.rc != 0
 
-    - name: Install community.aws collection if not present
+    - name: Install community.aws collection
       ansible.builtin.command: >
         ansible-galaxy collection install community.aws --ignore-certs
-      delegate_to: localhost
-      become: false
-      ignore_errors: true
+      register: collection_install
+      changed_when: "'Installing' in collection_install.stdout"
+
+    - name: Wait for SSM agent to be online
+      ansible.builtin.shell: |
+        aws ssm describe-instance-information \
+          --filters "Key=InstanceIds,Values={{ hostvars[groups['all'][0]]['ansible_aws_ssm_instance_id'] }}" \
+          --region {{ hostvars[groups['all'][0]]['ansible_aws_ssm_region'] }} \
+          --query 'InstanceInformationList[0].PingStatus' \
+          --output text
+      register: ssm_status
+      retries: 12
+      delay: 15
+      until: ssm_status.stdout.strip() == "Online"
+
+# -------------------------------------------------------
+# Play 2 — Configure EC2 instance via SSM
+# All your existing tasks unchanged — just moved here
+# -------------------------------------------------------
+- name: Configure demo instance — AAP runtime layer
+  hosts: all
+  become: true
+  gather_facts: false
+  connection: community.aws.aws_ssm
+
+  vars:
+    config_version: "1.3.0"
+    aap_job_id: "{{ tower_job_id | default('unknown') }}"
+    aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
+
+  tasks:
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
 
     - name: Gather facts
       ansible.builtin.setup:
@@ -71,11 +90,8 @@
           - hardware
           - virtual
 
-  tasks:
-
     # -------------------------------------------------------
     # Task 1 — Update the version page with live runtime info
-    # Shows: Packer baked the base, Ansible knows the runtime
     # -------------------------------------------------------
     - name: Inject runtime details into existing Packer page
       ansible.builtin.blockinfile:
@@ -97,7 +113,6 @@
 
     # -------------------------------------------------------
     # Task 2 — Write the /status endpoint
-    # This is pure runtime data — impossible to bake into image
     # -------------------------------------------------------
     - name: Write runtime status page
       ansible.builtin.copy:
@@ -123,8 +138,7 @@
         mode: '0644'
 
     # -------------------------------------------------------
-    # Task 3 — Write audit file to the instance
-    # Tangible proof on the filesystem that AAP ran
+    # Task 3 — Write audit file
     # -------------------------------------------------------
     - name: Write Ansible audit file
       ansible.builtin.copy:
@@ -141,7 +155,6 @@
 
     # -------------------------------------------------------
     # Task 4 — Ensure nginx is serving correctly
-    # Validates the full chain worked end to end
     # -------------------------------------------------------
     - name: Ensure nginx is running
       ansible.builtin.systemd:
