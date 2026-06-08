@@ -53,8 +53,8 @@
     - name: Wait for SSM agent to be online
       ansible.builtin.shell: |
         aws ssm describe-instance-information \
-          --filters "Key=InstanceIds,Values={{ hostvars[groups['all'][0]]['ansible_aws_ssm_instance_id'] }}" \
-          --region {{ hostvars[groups['all'][0]]['ansible_aws_ssm_region'] }} \
+          --filters "Key=InstanceIds,Values={{ hostvars[groups['all'][0]]['ssm_instance_id'] }}" \
+          --region {{ hostvars[groups['all'][0]]['aws_region'] }} \
           --query 'InstanceInformationList[0].PingStatus' \
           --output text
       register: ssm_status
@@ -77,7 +77,7 @@
     aap_job_id: "{{ tower_job_id | default('unknown') }}"
     ssm_instance_id: "{{ ssm_instance_id | default('') }}"
     aws_region: "{{ aws_region | default('us-east-1') }}"
-    
+
   tasks:
 
     - name: Wait for cloud-init to complete
