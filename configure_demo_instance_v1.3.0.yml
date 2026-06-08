@@ -16,6 +16,10 @@
   gather_facts: false
 
   tasks:
+    - name: Check Ansible version
+      ansible.builtin.debug:
+        msg: "{{ ansible_version.full }}"
+
     - name: Validate required variables are set
       ansible.builtin.assert:
         that:
