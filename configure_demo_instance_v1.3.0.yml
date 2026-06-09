@@ -3,6 +3,19 @@
 # Play 1 — Prepare execution environment on AAP runner
 # Installs AWS CLI, SSM plugin, and community.aws collection
 # -------------------------------------------------------
+---
+- name: Check runner version
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Get ansible-runner version
+      ansible.builtin.shell: pip show ansible-runner | grep Version
+      register: runner_ver
+    - name: Show
+      ansible.builtin.debug:
+        msg: "{{ runner_ver.stdout }}"
+
 - name: Prepare execution environment
   hosts: localhost
   connection: local
