@@ -10,12 +10,6 @@
   gather_facts: false
 
   tasks:
-- name: Prepare execution environment
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  tasks:
     - name: Check Ansible version
       ansible.builtin.debug:
         msg: "{{ ansible_version.full }}"
