@@ -30,20 +30,24 @@
 
     - name: Check Python and pip availability
       ansible.builtin.shell: |
-        echo "Python path: $(which python3)"
-        echo "Python version: $(python3 --version)"
-        echo "Pip check: $(python3 -m pip --version 2>&1 || echo 'pip NOT FOUND')"
-        echo "Pip3 check: $(pip3 --version 2>&1 || echo 'pip3 NOT FOUND')"
-        echo "Available pythons:"
-        ls /usr/bin/python* 2>/dev/null || echo "none in /usr/bin"
-        ls /usr/local/bin/python* 2>/dev/null || echo "none in /usr/local/bin"
+        echo "Python: $(which python3 2>/dev/null || echo NOT FOUND)"
+        echo "Version: $(python3 --version 2>/dev/null || echo NOT FOUND)"
+        echo "Pip: $(python3 -m pip --version 2>/dev/null || echo NOT FOUND)"
       register: python_check
-      delegate_to: localhost
-      become: false
+      changed_when: false
 
     - name: Show Python environment
       ansible.builtin.debug:
         msg: "{{ python_check.stdout_lines }}"
+
+    - name: Install pip if not present
+      ansible.builtin.shell: |
+        curl -sL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
+        python3 /tmp/get-pip.py
+        rm -f /tmp/get-pip.py
+      register: pip_bootstrap
+      changed_when: "'Successfully installed' in pip_bootstrap.stdout"
+      failed_when: false
 
     - name: Install boto3 and botocore via pip
       ansible.builtin.shell: |
@@ -109,7 +113,6 @@
       retries: 12
       delay: 15
       until: ssm_status.stdout.strip() == "Online"
-      when: ssm_instance_id is defined and ssm_instance_id != ''
 
 # -------------------------------------------------------
 # Play 2 — Configure EC2 instance via SSM
