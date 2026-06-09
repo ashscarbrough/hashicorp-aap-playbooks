@@ -2,7 +2,6 @@
 # -------------------------------------------------------
 # Play 1 — Prepare execution environment on AAP runner
 # Installs AWS CLI, SSM plugin, and community.aws collection
-# on the AAP execution pod before Play 2 uses SSM connection
 # -------------------------------------------------------
 - name: Prepare execution environment
   hosts: localhost
@@ -10,20 +9,15 @@
   gather_facts: false
 
   tasks:
-    - name: Check Ansible version
-      ansible.builtin.debug:
-        msg: "{{ ansible_version.full }}"
-
     - name: Validate required variables are set
       ansible.builtin.assert:
         that:
           - ssm_instance_id is defined
           - ssm_instance_id != ''
-          - ssm_instance_id != None
           - aws_region is defined
           - ssm_bucket_name is defined
         fail_msg: >
-          Missing required variables. Ensure Terraform is passing:
+          Missing required variables.
           ssm_instance_id={{ ssm_instance_id | default('NOT SET') }}
           aws_region={{ aws_region | default('NOT SET') }}
           ssm_bucket_name={{ ssm_bucket_name | default('NOT SET') }}
@@ -49,18 +43,17 @@
       changed_when: "'Successfully installed' in pip_bootstrap.stdout"
       failed_when: false
 
-    - name: Install boto3 and botocore via pip
+    - name: Install boto3 and botocore
       ansible.builtin.shell: |
-        /usr/bin/python3 -m pip install --upgrade boto3 botocore
+        python3 -m pip install --upgrade boto3 botocore
       register: pip_install
       changed_when: "'Successfully installed' in pip_install.stdout"
-      delegate_to: localhost
-      become: false
 
     - name: Check if AWS CLI is already installed
       ansible.builtin.shell: which aws && aws --version
       register: aws_cli_check
       failed_when: false
+      changed_when: false
 
     - name: Install AWS CLI if not present
       ansible.builtin.shell: |
@@ -75,6 +68,7 @@
       ansible.builtin.shell: which session-manager-plugin && session-manager-plugin --version
       register: ssm_plugin_check
       failed_when: false
+      changed_when: false
 
     - name: Install SSM Session Manager plugin if not present
       ansible.builtin.shell: |
@@ -85,22 +79,10 @@
       when: ssm_plugin_check.rc != 0
 
     - name: Install community.aws collection
-      ansible.builtin.command: >
+      ansible.builtin.shell: |
         ansible-galaxy collection install community.aws --ignore-certs
       register: collection_install
       changed_when: "'Installing' in collection_install.stdout"
-
-    - name: Wait for SSM agent to be online
-      ansible.builtin.shell: |
-        aws ssm describe-instance-information \
-          --filters "Key=InstanceIds,Values={{ hostvars[groups['all'][0]]['ssm_instance_id'] }}" \
-          --region {{ hostvars[groups['all'][0]]['aws_region'] }} \
-          --query 'InstanceInformationList[0].PingStatus' \
-          --output text
-      register: ssm_status
-      retries: 12
-      delay: 15
-      until: ssm_status.stdout.strip() == "Online"
 
     - name: Wait for SSM agent to be online
       ansible.builtin.shell: |
@@ -116,7 +98,6 @@
 
 # -------------------------------------------------------
 # Play 2 — Configure EC2 instance via SSM
-# All your existing tasks unchanged — just moved here
 # -------------------------------------------------------
 - name: Configure demo instance — AAP runtime layer
   hosts: all
@@ -146,7 +127,7 @@
           - virtual
 
     # -------------------------------------------------------
-    # Task 1 — Update the version page with live runtime info
+    # Task 1 — Inject runtime details into Packer page
     # -------------------------------------------------------
     - name: Inject runtime details into existing Packer page
       ansible.builtin.blockinfile:
