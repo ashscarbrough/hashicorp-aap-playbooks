@@ -3,7 +3,6 @@
 # Play 1 — Prepare execution environment on AAP runner
 # Installs AWS CLI, SSM plugin, and community.aws collection
 # -------------------------------------------------------
----
 - name: Check runner version
   hosts: localhost
   connection: local
