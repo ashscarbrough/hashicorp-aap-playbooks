@@ -9,6 +9,22 @@
   gather_facts: false
 
   tasks:
+    - name: Test basic shell
+      ansible.builtin.shell: echo "test"
+      register: test_output
+
+    - name: Show output
+      ansible.builtin.debug:
+        msg: "{{ test_output.stdout }}"
+
+    - name: Test basic command
+      ansible.builtin.command: echo "test"
+      register: test_output
+
+    - name: Show output
+      ansible.builtin.debug:
+        msg: "{{ test_output.stdout }}"
+
     - name: Validate required variables are set
       ansible.builtin.assert:
         that:
