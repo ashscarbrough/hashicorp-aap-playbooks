@@ -34,6 +34,23 @@
           aws_region={{ aws_region | default('NOT SET') }}
           ssm_bucket_name={{ ssm_bucket_name | default('NOT SET') }}
 
+    - name: Check Python and pip availability
+      ansible.builtin.shell: |
+        echo "Python path: $(which python3)"
+        echo "Python version: $(python3 --version)"
+        echo "Pip check: $(python3 -m pip --version 2>&1 || echo 'pip NOT FOUND')"
+        echo "Pip3 check: $(pip3 --version 2>&1 || echo 'pip3 NOT FOUND')"
+        echo "Available pythons:"
+        ls /usr/bin/python* 2>/dev/null || echo "none in /usr/bin"
+        ls /usr/local/bin/python* 2>/dev/null || echo "none in /usr/local/bin"
+      register: python_check
+      delegate_to: localhost
+      become: false
+
+    - name: Show Python environment
+      ansible.builtin.debug:
+        msg: "{{ python_check.stdout_lines }}"
+
     - name: Install boto3 and botocore via pip
       ansible.builtin.shell: |
         /usr/bin/python3 -m pip install --upgrade boto3 botocore
