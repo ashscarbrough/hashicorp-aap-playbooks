@@ -35,11 +35,12 @@
           ssm_bucket_name={{ ssm_bucket_name | default('NOT SET') }}
 
     - name: Install boto3 and botocore via pip
-      ansible.builtin.pip:
-        name:
-          - boto3
-          - botocore
-        state: present
+      ansible.builtin.shell: |
+        /usr/bin/python3 -m pip install --upgrade boto3 botocore
+      register: pip_install
+      changed_when: "'Successfully installed' in pip_install.stdout"
+      delegate_to: localhost
+      become: false
 
     - name: Check if AWS CLI is already installed
       ansible.builtin.shell: which aws && aws --version
