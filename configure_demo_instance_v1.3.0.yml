@@ -1,176 +1,52 @@
 ---
-# -------------------------------------------------------
-# Play 1 — Prepare execution environment on AAP runner
-# Installs AWS CLI, SSM plugin, and community.aws collection
-# -------------------------------------------------------
-# - name: Check runner version
-#   hosts: localhost
-#   connection: local
-#   gather_facts: false
-#   tasks:
-#     - name: Get ansible-runner version
-#       ansible.builtin.shell: python3 -m pip show ansible-runner | grep Version
-#       register: runner_ver
-#       failed_when: false
-
-#     - name: Get ansible-core version
-#       ansible.builtin.shell: python3 -m pip show ansible-core | grep Version
-#       register: core_ver
-#       failed_when: false
-
-#     - name: Get python version
-#       ansible.builtin.shell: python3 --version
-#       register: python_ver
-#       failed_when: false
-
-#     - name: Show all versions
-#       ansible.builtin.debug:
-#         msg:
-#           - "Runner: {{ runner_ver.stdout | default('not found') }}"
-#           - "Core: {{ core_ver.stdout | default('not found') }}"
-#           - "Python: {{ python_ver.stdout | default('not found') }}"
-
-- name: Prepare execution environment
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  tasks:
-    - name: Test basic shell
-      ansible.builtin.shell: echo "test"
-      register: test_output
-
-    - name: Show output
-      ansible.builtin.debug:
-        msg: "{{ test_output.stdout }}"
-
-    - name: Test basic command
-      ansible.builtin.command: echo "test"
-      register: test_output
-
-    - name: Show output
-      ansible.builtin.debug:
-        msg: "{{ test_output.stdout }}"
-
-    - name: Validate required variables are set
-      ansible.builtin.assert:
-        that:
-          - ssm_instance_id is defined
-          - ssm_instance_id != ''
-          - aws_region is defined
-          - ssm_bucket_name is defined
-        fail_msg: >
-          Missing required variables.
-          ssm_instance_id={{ ssm_instance_id | default('NOT SET') }}
-          aws_region={{ aws_region | default('NOT SET') }}
-          ssm_bucket_name={{ ssm_bucket_name | default('NOT SET') }}
-
-    - name: Check Python and pip availability
-      ansible.builtin.shell: |
-        echo "Python: $(which python3 2>/dev/null || echo NOT FOUND)"
-        echo "Version: $(python3 --version 2>/dev/null || echo NOT FOUND)"
-        echo "Pip: $(python3 -m pip --version 2>/dev/null || echo NOT FOUND)"
-      register: python_check
-      changed_when: false
-
-    - name: Show Python environment
-      ansible.builtin.debug:
-        msg: "{{ python_check.stdout_lines }}"
-
-    - name: Install pip if not present
-      ansible.builtin.shell: |
-        curl -sL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py
-        python3 /tmp/get-pip.py
-        rm -f /tmp/get-pip.py
-      register: pip_bootstrap
-      changed_when: "'Successfully installed' in pip_bootstrap.stdout"
-      failed_when: false
-
-    - name: Install boto3 and botocore
-      ansible.builtin.shell: |
-        python3 -m pip install --upgrade boto3 botocore
-      register: pip_install
-      changed_when: "'Successfully installed' in pip_install.stdout"
-
-    - name: Check if AWS CLI is already installed
-      ansible.builtin.shell: which aws && aws --version
-      register: aws_cli_check
-      failed_when: false
-      changed_when: false
-
-    - name: Install AWS CLI if not present
-      ansible.builtin.shell: |
-        curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
-          -o /tmp/awscliv2.zip
-        unzip -q /tmp/awscliv2.zip -d /tmp/
-        /tmp/aws/install --update
-        rm -rf /tmp/aws /tmp/awscliv2.zip
-      when: aws_cli_check.rc != 0
-
-    - name: Check if SSM plugin is already installed
-      ansible.builtin.shell: which session-manager-plugin && session-manager-plugin --version
-      register: ssm_plugin_check
-      failed_when: false
-      changed_when: false
-
-    - name: Install SSM Session Manager plugin if not present
-      ansible.builtin.shell: |
-        curl -sL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm" \
-          -o /tmp/session-manager-plugin.rpm
-        rpm -i /tmp/session-manager-plugin.rpm
-        rm -f /tmp/session-manager-plugin.rpm
-      when: ssm_plugin_check.rc != 0
-
-    - name: Install community.aws collection
-      ansible.builtin.shell: |
-        ansible-galaxy collection install community.aws --ignore-certs
-      register: collection_install
-      changed_when: "'Installing' in collection_install.stdout"
-
-    - name: Wait for SSM agent to be online
-      ansible.builtin.shell: |
-        aws ssm describe-instance-information \
-          --filters "Key=InstanceIds,Values={{ ssm_instance_id }}" \
-          --region {{ aws_region | default('us-east-1') }} \
-          --query 'InstanceInformationList[0].PingStatus' \
-          --output text
-      register: ssm_status
-      retries: 12
-      delay: 15
-      until: ssm_status.stdout.strip() == "Online"
-
-# -------------------------------------------------------
-# Play 2 — Configure EC2 instance via SSM
-# -------------------------------------------------------
 - name: Configure demo instance — AAP runtime layer
   hosts: all
   become: true
-  gather_facts: false
-  connection: community.aws.aws_ssm
+  gather_facts: false        # REQUIRED — prevents implicit fact gathering
+                             # before pre_tasks run.
 
   vars:
     config_version: "1.3.0"
     aap_job_id: "{{ tower_job_id | default('unknown') }}"
-    ansible_aws_ssm_instance_id: "{{ ssm_instance_id | default('') }}"
-    ansible_aws_ssm_region: "{{ aws_region | default('us-east-1') }}"
-    ansible_aws_ssm_bucket_name: "{{ ssm_bucket_name | default('') }}"
-    ansible_python_interpreter: "/usr/bin/python3"
+    aap_job_url: "{{ tower_url | default('unknown') }}/api/v2/jobs/{{ tower_job_id }}"
 
-  tasks:
+  pre_tasks:
+    - name: Wait for port 22 to be open
+      # Runs on the AAP controller, not the target host.
+      # Tolerates both Connection refused (sshd not yet started) and
+      # Connection timed out (EIP not yet reassigned to new instance).
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 22
+        state: started
+        delay: 30
+        timeout: 300
+        sleep: 10
+      delegate_to: localhost
+      become: false
+
+    - name: Wait for SSH connection to be fully functional
+      # Port 22 is open — now confirm full SSH handshake succeeds.
+      ansible.builtin.wait_for_connection:
+        delay: 0
+        timeout: 120
+        sleep: 10
+        connect_timeout: 10
 
     - name: Wait for cloud-init to complete
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
 
     - name: Gather facts
-      ansible.builtin.setup:
-        gather_subset:
-          - network
-          - hardware
-          - virtual
+      # Collected here after SSH is confirmed ready, replacing the
+      # implicit gather_facts disabled in the play header.
+      ansible.builtin.gather_facts:
+
+  tasks:
 
     # -------------------------------------------------------
-    # Task 1 — Inject runtime details into Packer page
+    # Task 1 — Update the version page with live runtime info
+    # Shows: Packer baked the base, Ansible knows the runtime
     # -------------------------------------------------------
     - name: Inject runtime details into existing Packer page
       ansible.builtin.blockinfile:
@@ -192,6 +68,7 @@
 
     # -------------------------------------------------------
     # Task 2 — Write the /status endpoint
+    # This is pure runtime data — impossible to bake into image
     # -------------------------------------------------------
     - name: Write runtime status page
       ansible.builtin.copy:
@@ -217,7 +94,8 @@
         mode: '0644'
 
     # -------------------------------------------------------
-    # Task 3 — Write audit file
+    # Task 3 — Write audit file to the instance
+    # Tangible proof on the filesystem that AAP ran
     # -------------------------------------------------------
     - name: Write Ansible audit file
       ansible.builtin.copy:
@@ -234,6 +112,7 @@
 
     # -------------------------------------------------------
     # Task 4 — Ensure nginx is serving correctly
+    # Validates the full chain worked end to end
     # -------------------------------------------------------
     - name: Ensure nginx is running
       ansible.builtin.systemd:
