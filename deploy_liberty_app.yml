@@ -1,0 +1,136 @@
+---
+- name: Deploy Liberty Demo Application
+  hosts:
+    - all
+  gather_facts: true
+  become: yes
+  become_method: sudo
+
+  vars:
+    # ── S3 artifact source ────────────────────────────────────
+    s3_bucket:      "ams-hashicorp-artifacts"
+    aws_region:     "us-east-1"
+    s3_war_key:     "liberty/apps/liberty-demo.war"
+
+    # ── Liberty paths ─────────────────────────────────────────
+    liberty_usr_dir:     "/usr/WebSphere/usr"
+    liberty_server_name: "liberty-base"
+    liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
+    liberty_wlp_dir:     "/usr/WebSphere/wlp"
+
+    # ── Application metadata ──────────────────────────────────
+    # AAP survey variable — set in job template survey
+    app_version:    "{{ app_version | default('1.0.0') }}"
+    deploy_mode:    "non-immutable"
+
+  tasks:
+
+    # ── PRE-FLIGHT ────────────────────────────────────────────
+
+    - name: Check Liberty is installed
+      stat:
+        path: "{{ liberty_wlp_dir }}"
+      register: wlp_check
+
+    - name: Abort if Liberty not present
+      fail:
+        msg: "Liberty not found at {{ liberty_wlp_dir }} — run install-liberty-base first."
+      when: not wlp_check.stat.exists
+
+    - name: Ensure apps directory exists
+      file:
+        path: "{{ liberty_server_dir }}/apps"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Ensure apps/demo sidecar directory exists
+      file:
+        path: "{{ liberty_server_dir }}/apps/demo"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    # ── PULL WAR FROM S3 ──────────────────────────────────────
+
+    - name: Download liberty-demo.war from S3
+      command: >
+        aws s3 cp s3://{{ s3_bucket }}/{{ s3_war_key }}
+        {{ liberty_server_dir }}/apps/liberty-demo.war
+      environment:
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+
+    - name: Set ownership on WAR file
+      file:
+        path: "{{ liberty_server_dir }}/apps/liberty-demo.war"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+
+    # ── APPLICATION CONFIG ────────────────────────────────────
+
+    - name: Deploy application1.xml to server config dir
+      copy:
+        dest: "{{ liberty_server_dir }}/application1.xml"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          <server>
+              <application id="liberty-demo"
+                           name="liberty-demo"
+                           type="war"
+                           location="{{ liberty_server_dir }}/apps/liberty-demo.war">
+                  <classloader delegation="parentLast"/>
+              </application>
+          </server>
+
+    - name: Deploy app.properties (non-immutable)
+      copy:
+        dest: "{{ liberty_server_dir }}/apps/demo/app.properties"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          # Written by AAP deploy-liberty-app job template
+          # Path: non-immutable
+
+          deploy.mode=non-immutable
+          app.version={{ app_version }}
+          liberty.version=26.0.0
+
+          # HCP Packer fields intentionally blank for non-immutable path
+          ami.id=
+          ami.version=
+          packer.bucket=
+          packer.channel=
+          packer.build.timestamp=
+
+    # ── WAIT FOR LIBERTY TO PICK UP THE APP ──────────────────
+    # applicationMonitor polled mode detects new WARs within ~5 seconds
+    # No server restart required
+
+    - name: Wait for Liberty to deploy the application
+      wait_for:
+        timeout: 15
+      delegate_to: localhost
+      become: no
+
+    - name: Verify application endpoint is responding
+      uri:
+        url: "http://{{ ansible_host }}:9080/liberty-demo/health"
+        method: GET
+        status_code: 200
+        timeout: 30
+      register: health_check
+      retries: 5
+      delay: 5
+      until: health_check.status == 200
+      delegate_to: localhost
+      become: no
+
+    - name: Print health check response
+      debug:
+        msg: "Health check passed — {{ health_check.json }}"

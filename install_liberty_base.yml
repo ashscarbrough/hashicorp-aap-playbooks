@@ -1,0 +1,463 @@
+---
+- name: Install and Configure IBM WebSphere Liberty (Standalone)
+  hosts:
+    - all
+  gather_facts: true
+  become: yes
+  become_method: sudo
+
+  vars:
+    # ── S3 artifact source ────────────────────────────────────
+    s3_bucket:          "ams-hashicorp-artifacts"
+    aws_region:         "us-east-1"
+    liberty_jar:        "wlp-base-all-26.0.0.jar"
+    s3_liberty_key:     "liberty/{{ liberty_jar }}"
+
+    # ── Directory layout ──────────────────────────────────────
+    liberty_base_dir:          "/usr/WebSphere"
+    liberty_wlp_dir:           "{{ liberty_base_dir }}/wlp"
+    liberty_usr_dir:           "{{ liberty_base_dir }}/usr"
+    liberty_versions_dir:      "{{ liberty_base_dir }}/versions"
+    liberty_install_dir:       "{{ liberty_versions_dir }}/wlp-26.0.0"
+    liberty_shared_config_dir: "{{ liberty_usr_dir }}/shared/config"
+    liberty_shared_res_dir:    "{{ liberty_usr_dir }}/shared/resources"
+    liberty_server_name:       "liberty-base"
+    liberty_server_dir:        "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
+    liberty_log_dir:           "/wslogs/{{ liberty_server_name }}"
+
+    # ── Server config ─────────────────────────────────────────
+    liberty_version:    "26.0.0"
+    http_port:          "9080"
+    https_port:         "9443"
+
+    # ── Secrets (injected by AAP credential or survey) ────────
+    keystore_password:      "{{ lookup('env', 'KEYSTORE_PASSWORD')      | default('changeme-demo', true) }}"
+    liberty_admin_user:     "{{ lookup('env', 'LIBERTY_ADMIN_USER')     | default('libertyAdmin', true) }}"
+    liberty_admin_password: "{{ lookup('env', 'LIBERTY_ADMIN_PASSWORD') | default('changeme-demo', true) }}"
+
+  tasks:
+
+    # ── PRE-FLIGHT ────────────────────────────────────────────
+
+    - name: Check Liberty is not already installed
+      stat:
+        path: "{{ liberty_wlp_dir }}"
+      register: wlp_existing
+
+    - name: Abort if Liberty already present
+      fail:
+        msg: "Liberty already exists at {{ liberty_wlp_dir }} — aborting to avoid overwrite."
+      when: wlp_existing.stat.exists
+
+    # ── USER AND GROUP ────────────────────────────────────────
+
+    - name: Create wsadm group
+      group:
+        name: wsadm
+        state: present
+
+    - name: Create wsadmin user
+      user:
+        name: wsadmin
+        group: wsadm
+        home: /home/wsadmin
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    # ── DIRECTORY STRUCTURE ───────────────────────────────────
+
+    - name: Create base WebSphere directory
+      file:
+        path: "{{ liberty_base_dir }}"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Create versions directory
+      file:
+        path: "{{ liberty_versions_dir }}"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Create log directory
+      file:
+        path: "{{ liberty_log_dir }}"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    # ── AWS CLI ───────────────────────────────────────────────
+
+    - name: Install AWS CLI
+      package:
+        name: awscli
+        state: present
+
+    # ── LIBERTY INSTALLATION ──────────────────────────────────
+
+    - name: Download Liberty jar from S3
+      command: >
+        aws s3 cp s3://{{ s3_bucket }}/{{ s3_liberty_key }}
+        {{ liberty_versions_dir }}/{{ liberty_jar }}
+      environment:
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      args:
+        creates: "{{ liberty_versions_dir }}/{{ liberty_jar }}"
+
+    - name: Set ownership on Liberty jar
+      file:
+        path: "{{ liberty_versions_dir }}/{{ liberty_jar }}"
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Install Liberty from jar
+      command: >
+        su - wsadmin -c
+        "java -jar {{ liberty_versions_dir }}/{{ liberty_jar }}
+        --acceptLicense {{ liberty_install_dir }}"
+      args:
+        creates: "{{ liberty_install_dir }}/bin/server"
+
+    - name: Create versioned symlink
+      file:
+        src: "{{ liberty_install_dir }}"
+        dest: "{{ liberty_wlp_dir }}"
+        state: link
+
+    - name: Move usr directory to standard path
+      command: mv {{ liberty_wlp_dir }}/usr {{ liberty_usr_dir }}
+      args:
+        creates: "{{ liberty_usr_dir }}"
+
+    - name: Remove Liberty jar after install
+      file:
+        path: "{{ liberty_versions_dir }}/{{ liberty_jar }}"
+        state: absent
+
+    # ── SHARED DIRECTORY STRUCTURE ────────────────────────────
+
+    - name: Create shared config directory
+      file:
+        path: "{{ liberty_shared_config_dir }}"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Create shared resources security directory
+      file:
+        path: "{{ liberty_shared_res_dir }}/security"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0750'
+
+    - name: Create shared JDBC stub directories
+      file:
+        path: "{{ liberty_shared_res_dir }}/jdbc/{{ item }}"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+      loop:
+        - db2
+        - mssql
+        - oracle
+
+    # ── KEYSTORE GENERATION ───────────────────────────────────
+
+    - name: Install java-11-openjdk for keytool
+      package:
+        name: java-11-openjdk
+        state: present
+
+    - name: Generate self-signed key.p12
+      command: >
+        keytool -genkeypair
+        -alias defaultKey
+        -keyalg RSA
+        -keysize 2048
+        -validity 365
+        -storetype PKCS12
+        -keystore {{ liberty_shared_res_dir }}/security/key.p12
+        -storepass {{ keystore_password }}
+        -dname "CN={{ ansible_hostname }}, OU=Demo, O=IBM, L=Demo, S=Demo, C=US"
+      args:
+        creates: "{{ liberty_shared_res_dir }}/security/key.p12"
+
+    - name: Export certificate for trust store
+      command: >
+        keytool -exportcert
+        -alias defaultKey
+        -keystore {{ liberty_shared_res_dir }}/security/key.p12
+        -storepass {{ keystore_password }}
+        -file /tmp/liberty-demo.cer
+        -storetype PKCS12
+
+    - name: Import certificate into trust.p12
+      command: >
+        keytool -importcert
+        -alias defaultKey
+        -keystore {{ liberty_shared_res_dir }}/security/trust.p12
+        -storepass {{ keystore_password }}
+        -file /tmp/liberty-demo.cer
+        -storetype PKCS12
+        -noprompt
+      args:
+        creates: "{{ liberty_shared_res_dir }}/security/trust.p12"
+
+    - name: Remove temporary certificate file
+      file:
+        path: /tmp/liberty-demo.cer
+        state: absent
+
+    - name: Set secure ownership on keystores
+      file:
+        path: "{{ liberty_shared_res_dir }}/security"
+        owner: wsadmin
+        group: wsadm
+        mode: '0640'
+        recurse: yes
+
+    # ── CREATE SERVER INSTANCE ────────────────────────────────
+
+    - name: Create Liberty server instance
+      command: >
+        su - wsadmin -c
+        "{{ liberty_wlp_dir }}/bin/server create {{ liberty_server_name }}"
+      args:
+        creates: "{{ liberty_server_dir }}"
+
+    - name: Create server resources/security directory
+      file:
+        path: "{{ liberty_server_dir }}/resources/security"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Create apps directory
+      file:
+        path: "{{ liberty_server_dir }}/apps"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Create apps/demo sidecar directory
+      file:
+        path: "{{ liberty_server_dir }}/apps/demo"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    # ── CONFIGURATION FILES ───────────────────────────────────
+
+    - name: Deploy shared server.xml (Standard config)
+      copy:
+        dest: "{{ liberty_shared_config_dir }}/server.xml"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          <server description="Standard">
+
+              <featureManager>
+                  <feature>appSecurity-2.0</feature>
+                  <feature>transportSecurity-1.0</feature>
+                  <feature>restConnector-2.0</feature>
+                  <feature>monitor-1.0</feature>
+                  <feature>localConnector-1.0</feature>
+                  <feature>servlet-3.1</feature>
+                  <feature>jsp-2.3</feature>
+              </featureManager>
+
+              <variable name="APP_SERVER_NAME" value="${bootstrap.server.name}" />
+              <variable name="HOST" value="${bootstrap.host.name}" />
+
+              <httpEndpoint id="defaultHttpEndpoint" host="*"
+                            httpPort="{{ http_port }}"
+                            httpsPort="${bootstrap.https.port}">
+                  <sslOptions sslRef="defaultSSLConfig" />
+                  <httpOptions removeServerHeader="true" />
+              </httpEndpoint>
+
+              <logging logDirectory="/wslogs/${APP_SERVER_NAME}"
+                       maxFileSize="200" maxFiles="14"
+                       traceFileName="trace.log" traceFormat="BASIC"
+                       traceSpecification="*=INFO" messageFileName="messages.log"
+                       copySystemStreams="true" consoleLogLevel="AUDIT"
+                       suppressSensitiveTrace="true"/>
+
+              <applicationMonitor updateTrigger="polled"
+                                  dropins="dropins" dropinsEnabled="false"/>
+              <applicationManager autoExpand="true"/>
+
+              <sslDefault sslRef="defaultSSLConfig" sslProtocol="TLSv1.2"/>
+              <ssl id="defaultSSLConfig"
+                   keyStoreRef="defaultKeyStore"
+                   trustStoreRef="defaultTrustStore"
+                   sslProtocol="TLSv1.2" securityLevel="HIGH"/>
+              <keyStore id="defaultKeyStore"
+                        location="${shared.resource.dir}/security/key.p12"
+                        password="${env.KEYSTORE_PASSWORD}" type="pkcs12"/>
+              <keyStore id="defaultTrustStore"
+                        location="${shared.resource.dir}/security/trust.p12"
+                        password="${env.KEYSTORE_PASSWORD}" type="pkcs12"/>
+
+              <basicRegistry id="basic" realm="demo">
+                  <user name="${env.LIBERTY_ADMIN_USER}"
+                        password="${env.LIBERTY_ADMIN_PASSWORD}" />
+              </basicRegistry>
+
+              <administrator-role>
+                  <user>${env.LIBERTY_ADMIN_USER}</user>
+              </administrator-role>
+
+              <webContainer disableXPoweredBy="true" trusted="true"
+                            serveServletsByClassnameEnabled="false"/>
+              <webAppSecurity logoutOnHttpSessionExpire="true"
+                              httpOnlyCookies="true"
+                              ssoRequiresSSL="false"
+                              useAuthenticationDataForUnprotectedResource="true"/>
+              <authentication cacheEnabled="true"/>
+              <authCache initialSize="1000" maxSize="1000" timeout="600s"/>
+
+              <httpSession allowOverflow="false" invalidationTimeout="30m"
+                           maxInMemorySessionCount="1000" cookiesEnabled="true"
+                           cookieSecure="false" cookieHttpOnly="true"
+                           cookieMaxAge="-1"/>
+              <httpDispatcher enableWelcomePage="false"/>
+
+              <include location="${server.config.dir}/application1.xml"
+                       optional="true" onConflict="MERGE"/>
+
+          </server>
+
+    - name: Deploy per-server server.xml (thin wrapper)
+      copy:
+        dest: "{{ liberty_server_dir }}/server.xml"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          <server description="base">
+              <include location="${shared.config.dir}/server.xml"
+                       optional="false" onConflict="MERGE"/>
+          </server>
+
+    - name: Deploy bootstrap.properties
+      copy:
+        dest: "{{ liberty_server_dir }}/bootstrap.properties"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          bootstrap.server.name={{ liberty_server_name }}
+          bootstrap.host.name={{ ansible_hostname }}
+          bootstrap.https.port={{ https_port }}
+
+    - name: Deploy server.env
+      copy:
+        dest: "{{ liberty_server_dir }}/server.env"
+        owner: wsadmin
+        group: wsadm
+        mode: '0640'
+        content: |
+          JVM_ARGS=-Dhttps.protocols=TLSv1.2 -Djdk.tls.client.protocols=TLSv1.2
+          WLP_SKIP_UMASK=true
+          JAVA_HOME={{ liberty_wlp_dir }}/java/8.0/jre
+          WLP_USER_DIR={{ liberty_usr_dir }}
+          KEYSTORE_PASSWORD={{ keystore_password }}
+          LIBERTY_ADMIN_USER={{ liberty_admin_user }}
+          LIBERTY_ADMIN_PASSWORD={{ liberty_admin_password }}
+
+    - name: Deploy jvm.options
+      copy:
+        dest: "{{ liberty_wlp_dir }}/etc/jvm.options"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          -Dhttps.protocols=TLSv1.2
+          -Djdk.tls.client.protocols=TLSv1.2
+
+    # ── SYSTEMD SERVICE ───────────────────────────────────────
+
+    - name: Deploy Liberty systemd unit
+      copy:
+        dest: /etc/systemd/system/liberty-base.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=IBM WebSphere Liberty - liberty-base
+          After=network.target
+
+          [Service]
+          Type=forking
+          User=wsadmin
+          Group=wsadm
+          Environment=JAVA_HOME={{ liberty_wlp_dir }}/java/8.0/jre
+          Environment=WLP_USER_DIR={{ liberty_usr_dir }}
+          ExecStart={{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}
+          ExecStop={{ liberty_wlp_dir }}/bin/server stop {{ liberty_server_name }}
+          PIDFile={{ liberty_usr_dir }}/servers/{{ liberty_server_name }}/workarea/.pid
+          TimeoutStartSec=120
+          TimeoutStopSec=60
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable Liberty service at boot
+      systemd:
+        name: liberty-base
+        enabled: yes
+
+    # ── START AND VALIDATE ────────────────────────────────────
+
+    - name: Start Liberty server
+      command: >
+        su - wsadmin -c
+        "{{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}"
+      register: liberty_start_result
+      failed_when:
+        - liberty_start_result.rc != 0
+        - "'already running' not in liberty_start_result.stdout"
+
+    - name: Wait for Liberty HTTP endpoint
+      wait_for:
+        host: "127.0.0.1"
+        port: "{{ http_port }}"
+        timeout: 120
+        state: started
+
+    - name: Wait for Liberty HTTPS endpoint
+      wait_for:
+        host: "127.0.0.1"
+        port: "{{ https_port }}"
+        timeout: 120
+        state: started
+
+    - name: Confirm server status
+      command: >
+        su - wsadmin -c
+        "{{ liberty_wlp_dir }}/bin/server status {{ liberty_server_name }}"
+      register: server_status_result
+
+    - name: Print server status
+      debug:
+        msg: "{{ server_status_result.stdout }}"

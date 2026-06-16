@@ -1,0 +1,92 @@
+---
+- name: Update Liberty Runtime Injection Block
+  hosts:
+    - all
+  gather_facts: true
+  become: yes
+  become_method: sudo
+
+  # ── AAP SURVEY VARIABLES ──────────────────────────────────
+  # In AAP, create a survey on this job template with these fields:
+  #
+  #   Field label          | Variable name      | Type   | Default
+  #   ---------------------|--------------------|---------|-----------
+  #   Application Version  | app_version        | text   | 1.0.0
+  #   Environment          | deploy_environment | text   | demo
+  #
+  # tower_job_template_name and tower_job_id are injected
+  # automatically by AAP at runtime — no survey needed for these.
+
+  vars:
+    liberty_usr_dir:     "/usr/WebSphere/usr"
+    liberty_server_name: "liberty-base"
+    liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
+
+    # Survey-supplied — with safe defaults for testing outside AAP
+    app_version:        "{{ app_version        | default('1.0.0') }}"
+    deploy_environment: "{{ deploy_environment | default('demo')  }}"
+
+    # AAP magic variables — automatically available in any job run
+    aap_job_id:       "{{ tower_job_id            | default('local-run') }}"
+    aap_template:     "{{ tower_job_template_name | default('update-liberty-runtime') }}"
+
+  tasks:
+
+    # ── PRE-FLIGHT ────────────────────────────────────────────
+
+    - name: Check apps/demo sidecar directory exists
+      stat:
+        path: "{{ liberty_server_dir }}/apps/demo"
+      register: demo_dir_check
+
+    - name: Abort if demo app not yet deployed
+      fail:
+        msg: >
+          Sidecar directory {{ liberty_server_dir }}/apps/demo not found.
+          Run deploy-liberty-app before update-liberty-runtime.
+      when: not demo_dir_check.stat.exists
+
+    # ── WRITE RUNTIME.JSON ────────────────────────────────────
+
+    - name: Write runtime.json
+      copy:
+        dest: "{{ liberty_server_dir }}/apps/demo/runtime.json"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          {
+            "deployed_by":   "aap-job-{{ aap_job_id }}",
+            "environment":   "{{ deploy_environment }}",
+            "deployed_at":   "{{ ansible_date_time.iso8601 }}",
+            "app_version":   "{{ app_version }}",
+            "aap_template":  "{{ aap_template }}",
+            "managed_host":  "{{ ansible_hostname }}"
+          }
+
+    # ── VALIDATE ──────────────────────────────────────────────
+    # Page auto-refreshes every 30s — this confirms the file
+    # is readable before the demo presenter refreshes the browser
+
+    - name: Confirm runtime.json was written
+      slurp:
+        src: "{{ liberty_server_dir }}/apps/demo/runtime.json"
+      register: runtime_json_content
+
+    - name: Print runtime.json content
+      debug:
+        msg: "{{ runtime_json_content.content | b64decode }}"
+
+    - name: Verify page still responding after update
+      uri:
+        url: "http://{{ ansible_host }}:9080/liberty-demo/health"
+        method: GET
+        status_code: 200
+        timeout: 15
+      register: post_update_health
+      delegate_to: localhost
+      become: no
+
+    - name: Confirm health after runtime update
+      debug:
+        msg: "Server healthy after runtime update — {{ post_update_health.json }}"
