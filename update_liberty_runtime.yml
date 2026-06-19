@@ -6,7 +6,7 @@
   become: yes
   become_method: sudo
 
-  # ── AAP SURVEY VARIABLES ──────────────────────────────────
+  # AAP SURVEY VARIABLES
   # In AAP, create a survey on this job template with these fields:
   #
   #   Field label          | Variable name      | Type   | Default
@@ -15,24 +15,24 @@
   #   Environment          | deploy_environment | text   | demo
   #
   # tower_job_template_name and tower_job_id are injected
-  # automatically by AAP at runtime — no survey needed for these.
+  # automatically by AAP at runtime - no survey needed for these.
 
   vars:
     liberty_usr_dir:     "/usr/WebSphere/usr"
     liberty_server_name: "liberty-base"
     liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
 
-    # Survey-supplied — with safe defaults for testing outside AAP
+    # Survey-supplied - with safe defaults for testing outside AAP
     app_version:        "{{ app_version        | default('1.0.0') }}"
     deploy_environment: "{{ deploy_environment | default('demo')  }}"
 
-    # AAP magic variables — automatically available in any job run
-    aap_job_id:       "{{ tower_job_id            | default('local-run') }}"
-    aap_template:     "{{ tower_job_template_name | default('update-liberty-runtime') }}"
+    # AAP magic variables - automatically available in any job run
+    aap_job_id:   "{{ tower_job_id            | default('local-run') }}"
+    aap_template: "{{ tower_job_template_name | default('update-liberty-runtime') }}"
 
   tasks:
 
-    # ── PRE-FLIGHT ────────────────────────────────────────────
+    # PRE-FLIGHT
 
     - name: Check apps/demo sidecar directory exists
       stat:
@@ -46,7 +46,9 @@
           Run deploy-liberty-app before update-liberty-runtime.
       when: not demo_dir_check.stat.exists
 
-    # ── WRITE RUNTIME.JSON ────────────────────────────────────
+    # WRITE RUNTIME.JSON
+    # This file is read by the servlet on every page load.
+    # Liberty does not need to restart - the file is read from disk at request time.
 
     - name: Write runtime.json
       copy:
@@ -64,8 +66,8 @@
             "managed_host":  "{{ ansible_hostname }}"
           }
 
-    # ── VALIDATE ──────────────────────────────────────────────
-    # Page auto-refreshes every 30s — this confirms the file
+    # VALIDATE
+    # Page auto-refreshes every 30s - this confirms the file
     # is readable before the demo presenter refreshes the browser
 
     - name: Confirm runtime.json was written
@@ -89,4 +91,4 @@
 
     - name: Confirm health after runtime update
       debug:
-        msg: "Server healthy after runtime update — {{ post_update_health.json }}"
+        msg: "Server healthy after runtime update - {{ post_update_health.json }}"

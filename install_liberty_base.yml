@@ -7,13 +7,13 @@
   become_method: sudo
 
   vars:
-    # ── S3 artifact source ────────────────────────────────────
+    # S3 artifact source
     s3_bucket:          "ams-hashicorp-artifacts"
     aws_region:         "us-east-1"
-    liberty_jar:        "wlp-base-all-26.0.0.jar"
+    liberty_jar:        "wlp-base-all-26.0.0.5.jar"
     s3_liberty_key:     "liberty/{{ liberty_jar }}"
 
-    # ── Directory layout ──────────────────────────────────────
+    # Directory layout
     liberty_base_dir:          "/usr/WebSphere"
     liberty_wlp_dir:           "{{ liberty_base_dir }}/wlp"
     liberty_usr_dir:           "{{ liberty_base_dir }}/usr"
@@ -25,19 +25,19 @@
     liberty_server_dir:        "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
     liberty_log_dir:           "/wslogs/{{ liberty_server_name }}"
 
-    # ── Server config ─────────────────────────────────────────
+    # Server config
     liberty_version:    "26.0.0"
     http_port:          "9080"
     https_port:         "9443"
 
-    # ── Secrets (injected by AAP credential or survey) ────────
+    # Secrets - injected by AAP Liberty Secrets credential type
     keystore_password:      "{{ lookup('env', 'KEYSTORE_PASSWORD')      | default('changeme-demo', true) }}"
     liberty_admin_user:     "{{ lookup('env', 'LIBERTY_ADMIN_USER')     | default('libertyAdmin', true) }}"
     liberty_admin_password: "{{ lookup('env', 'LIBERTY_ADMIN_PASSWORD') | default('changeme-demo', true) }}"
 
   tasks:
 
-    # ── PRE-FLIGHT ────────────────────────────────────────────
+    # PRE-FLIGHT
 
     - name: Check Liberty is not already installed
       stat:
@@ -46,10 +46,10 @@
 
     - name: Abort if Liberty already present
       fail:
-        msg: "Liberty already exists at {{ liberty_wlp_dir }} — aborting to avoid overwrite."
+        msg: "Liberty already exists at {{ liberty_wlp_dir }} - aborting to avoid overwrite."
       when: wlp_existing.stat.exists
 
-    # ── USER AND GROUP ────────────────────────────────────────
+    # USER AND GROUP
 
     - name: Create wsadm group
       group:
@@ -65,7 +65,7 @@
         create_home: yes
         state: present
 
-    # ── DIRECTORY STRUCTURE ───────────────────────────────────
+    # DIRECTORY STRUCTURE
 
     - name: Create base WebSphere directory
       file:
@@ -91,14 +91,35 @@
         group: wsadm
         mode: '0755'
 
-    # ── AWS CLI ───────────────────────────────────────────────
+    # AWS CLI
 
     - name: Install AWS CLI
       package:
         name: awscli
         state: present
 
-    # ── LIBERTY INSTALLATION ──────────────────────────────────
+    # JAVA - install OpenJDK 11 for both keytool and Liberty runtime
+    # wlp-base-all does NOT bundle a JRE - system Java is required
+
+    - name: Install java-11-openjdk
+      package:
+        name: java-11-openjdk
+        state: present
+
+    - name: Resolve Java home path
+      command: "dirname $(dirname $(readlink -f $(which java)))"
+      register: java_home_result
+      changed_when: false
+
+    - name: Set java_home fact
+      set_fact:
+        java_home: "{{ java_home_result.stdout }}"
+
+    - name: Confirm Java home
+      debug:
+        msg: "Using JAVA_HOME: {{ java_home }}"
+
+    # LIBERTY INSTALLATION
 
     - name: Download Liberty jar from S3
       command: >
@@ -116,19 +137,54 @@
         group: wsadm
         mode: '0755'
 
+    # Liberty jar extracts a wlp/ subdirectory inside the target path
+    # so we target the versions dir and rename what comes out
     - name: Install Liberty from jar
       command: >
         su - wsadmin -c
         "java -jar {{ liberty_versions_dir }}/{{ liberty_jar }}
-        --acceptLicense {{ liberty_install_dir }}"
+        --acceptLicense {{ liberty_versions_dir }}/"
       args:
-        creates: "{{ liberty_install_dir }}/bin/server"
+        creates: "{{ liberty_versions_dir }}/wlp/bin/server"
+
+    - name: Rename extracted wlp directory to versioned name
+      command: "mv {{ liberty_versions_dir }}/wlp {{ liberty_install_dir }}"
+      args:
+        creates: "{{ liberty_install_dir }}"
 
     - name: Create versioned symlink
       file:
         src: "{{ liberty_install_dir }}"
         dest: "{{ liberty_wlp_dir }}"
         state: link
+
+    - name: Verify bin/server exists after install
+      stat:
+        path: "{{ liberty_wlp_dir }}/bin/server"
+      register: server_bin
+      failed_when: not server_bin.stat.exists
+
+    # Create JRE symlink so Liberty internal Java detection works
+    # Liberty looks for wlp/java/8.0/jre/bin/java at startup
+    - name: Create Liberty JRE directory
+      file:
+        path: "{{ liberty_wlp_dir }}/java/8.0"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Symlink system JRE into Liberty expected path
+      file:
+        src: "{{ java_home }}"
+        dest: "{{ liberty_wlp_dir }}/java/8.0/jre"
+        state: link
+
+    - name: Verify JRE symlink resolves correctly
+      stat:
+        path: "{{ liberty_wlp_dir }}/java/8.0/jre/bin/java"
+      register: jre_check
+      failed_when: not jre_check.stat.exists
 
     - name: Move usr directory to standard path
       command: mv {{ liberty_wlp_dir }}/usr {{ liberty_usr_dir }}
@@ -140,7 +196,7 @@
         path: "{{ liberty_versions_dir }}/{{ liberty_jar }}"
         state: absent
 
-    # ── SHARED DIRECTORY STRUCTURE ────────────────────────────
+    # SHARED DIRECTORY STRUCTURE
 
     - name: Create shared config directory
       file:
@@ -170,12 +226,9 @@
         - mssql
         - oracle
 
-    # ── KEYSTORE GENERATION ───────────────────────────────────
-
-    - name: Install java-11-openjdk for keytool
-      package:
-        name: java-11-openjdk
-        state: present
+    # KEYSTORE GENERATION
+    # key.p12 and trust.p12 must be separate files - importing back
+    # into the same keystore causes a keytool error
 
     - name: Generate self-signed key.p12
       command: >
@@ -200,6 +253,7 @@
         -file /tmp/liberty-demo.cer
         -storetype PKCS12
 
+    # Import into trust.p12 - NOT back into key.p12
     - name: Import certificate into trust.p12
       command: >
         keytool -importcert
@@ -225,14 +279,32 @@
         mode: '0640'
         recurse: yes
 
-    # ── CREATE SERVER INSTANCE ────────────────────────────────
+    # CREATE SERVER INSTANCE
 
     - name: Create Liberty server instance
       command: >
         su - wsadmin -c
         "{{ liberty_wlp_dir }}/bin/server create {{ liberty_server_name }}"
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+        WLP_USER_DIR: "{{ liberty_usr_dir }}"
       args:
         creates: "{{ liberty_server_dir }}"
+
+    - name: Create .pid directory with correct ownership
+      file:
+        path: "{{ liberty_usr_dir }}/servers/.pid"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Set ownership on full usr tree
+      file:
+        path: "{{ liberty_usr_dir }}"
+        owner: wsadmin
+        group: wsadm
+        recurse: yes
 
     - name: Create server resources/security directory
       file:
@@ -258,7 +330,7 @@
         group: wsadm
         mode: '0755'
 
-    # ── CONFIGURATION FILES ───────────────────────────────────
+    # CONFIGURATION FILES
 
     - name: Deploy shared server.xml (Standard config)
       copy:
@@ -364,6 +436,8 @@
           bootstrap.host.name={{ ansible_hostname }}
           bootstrap.https.port={{ https_port }}
 
+    # JAVA_HOME uses the resolved system JRE path, not the bundled JRE path
+    # which does not exist in wlp-base-all
     - name: Deploy server.env
       copy:
         dest: "{{ liberty_server_dir }}/server.env"
@@ -373,11 +447,19 @@
         content: |
           JVM_ARGS=-Dhttps.protocols=TLSv1.2 -Djdk.tls.client.protocols=TLSv1.2
           WLP_SKIP_UMASK=true
-          JAVA_HOME={{ liberty_wlp_dir }}/java/8.0/jre
+          JAVA_HOME={{ java_home }}
           WLP_USER_DIR={{ liberty_usr_dir }}
           KEYSTORE_PASSWORD={{ keystore_password }}
           LIBERTY_ADMIN_USER={{ liberty_admin_user }}
           LIBERTY_ADMIN_PASSWORD={{ liberty_admin_password }}
+
+    - name: Create Liberty etc directory for jvm.options
+      file:
+        path: "{{ liberty_wlp_dir }}/etc"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
 
     - name: Deploy jvm.options
       copy:
@@ -389,7 +471,8 @@
           -Dhttps.protocols=TLSv1.2
           -Djdk.tls.client.protocols=TLSv1.2
 
-    # ── SYSTEMD SERVICE ───────────────────────────────────────
+    # SYSTEMD SERVICE
+    # JAVA_HOME in the unit file uses the resolved system JRE path
 
     - name: Deploy Liberty systemd unit
       copy:
@@ -406,7 +489,7 @@
           Type=forking
           User=wsadmin
           Group=wsadm
-          Environment=JAVA_HOME={{ liberty_wlp_dir }}/java/8.0/jre
+          Environment=JAVA_HOME={{ java_home }}
           Environment=WLP_USER_DIR={{ liberty_usr_dir }}
           ExecStart={{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}
           ExecStop={{ liberty_wlp_dir }}/bin/server stop {{ liberty_server_name }}
@@ -427,12 +510,15 @@
         name: liberty-base
         enabled: yes
 
-    # ── START AND VALIDATE ────────────────────────────────────
+    # START AND VALIDATE
 
     - name: Start Liberty server
       command: >
         su - wsadmin -c
         "{{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}"
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+        WLP_USER_DIR: "{{ liberty_usr_dir }}"
       register: liberty_start_result
       failed_when:
         - liberty_start_result.rc != 0
@@ -456,6 +542,9 @@
       command: >
         su - wsadmin -c
         "{{ liberty_wlp_dir }}/bin/server status {{ liberty_server_name }}"
+      environment:
+        JAVA_HOME: "{{ java_home }}"
+        WLP_USER_DIR: "{{ liberty_usr_dir }}"
       register: server_status_result
 
     - name: Print server status

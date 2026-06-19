@@ -7,25 +7,24 @@
   become_method: sudo
 
   vars:
-    # ── S3 artifact source ────────────────────────────────────
+    # S3 artifact source
     s3_bucket:      "ams-hashicorp-artifacts"
     aws_region:     "us-east-1"
     s3_war_key:     "liberty/apps/liberty-demo.war"
 
-    # ── Liberty paths ─────────────────────────────────────────
+    # Liberty paths
     liberty_usr_dir:     "/usr/WebSphere/usr"
     liberty_server_name: "liberty-base"
     liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
     liberty_wlp_dir:     "/usr/WebSphere/wlp"
 
-    # ── Application metadata ──────────────────────────────────
-    # AAP survey variable — set in job template survey
+    # Application metadata - app_version supplied by AAP survey
     app_version:    "{{ app_version | default('1.0.0') }}"
     deploy_mode:    "non-immutable"
 
   tasks:
 
-    # ── PRE-FLIGHT ────────────────────────────────────────────
+    # PRE-FLIGHT
 
     - name: Check Liberty is installed
       stat:
@@ -34,7 +33,7 @@
 
     - name: Abort if Liberty not present
       fail:
-        msg: "Liberty not found at {{ liberty_wlp_dir }} — run install-liberty-base first."
+        msg: "Liberty not found at {{ liberty_wlp_dir }} - run install-liberty-base first."
       when: not wlp_check.stat.exists
 
     - name: Ensure apps directory exists
@@ -53,7 +52,7 @@
         group: wsadm
         mode: '0755'
 
-    # ── PULL WAR FROM S3 ──────────────────────────────────────
+    # PULL WAR FROM S3
 
     - name: Download liberty-demo.war from S3
       command: >
@@ -69,7 +68,9 @@
         group: wsadm
         mode: '0644'
 
-    # ── APPLICATION CONFIG ────────────────────────────────────
+    # APPLICATION CONFIG
+    # application1.xml uses absolute path to avoid Liberty symlink
+    # resolution issues with relative paths
 
     - name: Deploy application1.xml to server config dir
       copy:
@@ -108,7 +109,7 @@
           packer.channel=
           packer.build.timestamp=
 
-    # ── WAIT FOR LIBERTY TO PICK UP THE APP ──────────────────
+    # WAIT FOR LIBERTY TO PICK UP THE APP
     # applicationMonitor polled mode detects new WARs within ~5 seconds
     # No server restart required
 
@@ -133,4 +134,4 @@
 
     - name: Print health check response
       debug:
-        msg: "Health check passed — {{ health_check.json }}"
+        msg: "Health check passed - {{ health_check.json }}"
