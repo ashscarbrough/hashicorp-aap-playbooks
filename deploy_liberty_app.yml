@@ -24,6 +24,10 @@
     # app_version is passed as an extra var from the AAP workflow or survey
     # Default is intentionally not set here to avoid self-reference recursion
     # If not passed, tasks fall back to '1.0.0' inline
+    
+    # Passed from Terraform action via workflow extra vars
+    # Default allows the playbook to run standalone without the workflow
+    alb_dns_name: "{{ aap_alb_dns_name | default('localhost') }}"
 
   tasks:
 
