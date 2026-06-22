@@ -539,13 +539,6 @@
         timeout: 120
         state: started
 
-    - name: Wait for Liberty HTTPS endpoint
-      wait_for:
-        host: "127.0.0.1"
-        port: "{{ https_port }}"
-        timeout: 120
-        state: started
-
     - name: Confirm server status
       command: >
         su - wsadmin -c
