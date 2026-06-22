@@ -6,29 +6,17 @@
   become: yes
   become_method: sudo
 
-  # AAP SURVEY VARIABLES
-  # In AAP, create a survey on this job template with these fields:
-  #
-  #   Field label          | Variable name      | Type   | Default
-  #   ---------------------|--------------------|---------|-----------
-  #   Application Version  | app_version        | text   | 1.0.0
-  #   Environment          | deploy_environment | text   | demo
-  #
-  # tower_job_template_name and tower_job_id are injected
-  # automatically by AAP at runtime - no survey needed for these.
-
   vars:
     liberty_usr_dir:     "/usr/WebSphere/usr"
     liberty_server_name: "liberty-base"
     liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
 
-    # Survey-supplied - with safe defaults for testing outside AAP
-    app_version:        "{{ app_version        | default('1.0.0') }}"
-    deploy_environment: "{{ deploy_environment | default('demo')  }}"
-
     # AAP magic variables - automatically available in any job run
     aap_job_id:   "{{ tower_job_id            | default('local-run') }}"
     aap_template: "{{ tower_job_template_name | default('update-liberty-runtime') }}"
+
+    # app_version and deploy_environment are supplied via AAP survey
+    # Defaults are handled inline at point of use to avoid self-reference recursion
 
   tasks:
 
@@ -59,16 +47,14 @@
         content: |
           {
             "deployed_by":   "aap-job-{{ aap_job_id }}",
-            "environment":   "{{ deploy_environment }}",
+            "environment":   "{{ deploy_environment | default('demo') }}",
             "deployed_at":   "{{ ansible_date_time.iso8601 }}",
-            "app_version":   "{{ app_version }}",
+            "app_version":   "{{ app_version | default('1.0.0') }}",
             "aap_template":  "{{ aap_template }}",
             "managed_host":  "{{ ansible_hostname }}"
           }
 
     # VALIDATE
-    # Page auto-refreshes every 30s - this confirms the file
-    # is readable before the demo presenter refreshes the browser
 
     - name: Confirm runtime.json was written
       slurp:
