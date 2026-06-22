@@ -93,9 +93,13 @@
 
     # AWS CLI
 
+    - name: Refresh DNF cache
+      ansible.builtin.dnf:
+        update_cache: true
+      
     - name: Install AWS CLI
-      package:
-        name: awscli
+      ansible.builtin.dnf:
+        name: awscli2
         state: present
 
     # JAVA - install OpenJDK 11 for both keytool and Liberty runtime
