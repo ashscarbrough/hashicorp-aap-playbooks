@@ -10,7 +10,7 @@
     # S3 artifact source
     s3_bucket:      "ams-hashicorp-artifacts"
     aws_region:     "us-east-1"
-    s3_war_key:     "liberty/apps/liberty-demo.war"
+    s3_war_key:     "liberty/apps/liberty-demo-1.2.0.war"
 
     # Liberty paths
     liberty_usr_dir:     "/usr/WebSphere/usr"

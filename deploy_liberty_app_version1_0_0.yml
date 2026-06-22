@@ -1,0 +1,241 @@
+---
+- name: Rollback Liberty Demo Application to v1.0.0
+  hosts:
+    - all
+  gather_facts: true
+  become: yes
+  become_method: sudo
+
+  vars:
+    # S3 artifact source
+    s3_bucket:      "ams-hashicorp-artifacts"
+    aws_region:     "us-east-1"
+    s3_war_key:     "liberty/apps/liberty-demo-1.0.0.war"
+
+    # Liberty paths
+    liberty_usr_dir:     "/usr/WebSphere/usr"
+    liberty_server_name: "liberty-base"
+    liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
+    liberty_wlp_dir:     "/usr/WebSphere/wlp"
+
+    # Rollback target version -- baked into this playbook intentionally
+    # so the rollback target is explicit and not survey-driven
+    rollback_version: "1.0.0"
+    deploy_mode:      "non-immutable"
+
+    # alb_dns_name passed as extra var from Terraform action
+    # Default allows standalone run without workflow
+
+  tasks:
+
+    # PRE-FLIGHT
+
+    - name: Check Liberty is installed
+      stat:
+        path: "{{ liberty_wlp_dir }}"
+      register: wlp_check
+
+    - name: Abort if Liberty not present
+      fail:
+        msg: "Liberty not found at {{ liberty_wlp_dir }} - run install-liberty-base first."
+      when: not wlp_check.stat.exists
+
+    - name: Check current WAR exists
+      stat:
+        path: "{{ liberty_server_dir }}/apps"
+      register: apps_dir_check
+
+    - name: Abort if apps directory missing
+      fail:
+        msg: "Apps directory not found - has deploy-liberty-app been run?"
+      when: not apps_dir_check.stat.exists
+
+    # STOP LIBERTY BEFORE SWAP
+    # Stop cleanly before removing WAR to avoid Liberty logging errors
+    # during hot removal of a deployed application
+
+    - name: Stop Liberty server
+      command: >
+        su - wsadmin -c
+        "{{ liberty_wlp_dir }}/bin/server stop {{ liberty_server_name }}"
+      environment:
+        JAVA_HOME: "{{ ansible_env.JAVA_HOME | default('/usr/lib/jvm/java-11-openjdk') }}"
+        WLP_USER_DIR: "{{ liberty_usr_dir }}"
+      register: liberty_stop_result
+      failed_when:
+        - liberty_stop_result.rc != 0
+        - "'is not running' not in liberty_stop_result.stdout"
+
+    # REMOVE CURRENT APPLICATION ASSETS
+
+    - name: Remove existing WAR files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ liberty_server_dir }}/apps/liberty-demo.war"
+        - "{{ liberty_server_dir }}/apps/liberty-demo-1.2.0.war"
+        - "{{ liberty_server_dir }}/apps/liberty-base.war"
+
+    - name: Remove expanded WAR cache
+      file:
+        path: "{{ liberty_server_dir }}/apps/expanded"
+        state: absent
+
+    - name: Remove application1.xml
+      file:
+        path: "{{ liberty_server_dir }}/application1.xml"
+        state: absent
+
+    - name: Remove app.properties
+      file:
+        path: "{{ liberty_server_dir }}/apps/demo/app.properties"
+        state: absent
+
+    - name: Remove runtime.json
+      file:
+        path: "{{ liberty_server_dir }}/apps/demo/runtime.json"
+        state: absent
+
+    - name: Wipe Liberty workarea to ensure clean startup
+      file:
+        path: "{{ liberty_server_dir }}/workarea"
+        state: absent
+
+    # DEPLOY ROLLBACK VERSION
+
+    - name: Ensure apps directory exists
+      file:
+        path: "{{ liberty_server_dir }}/apps"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Ensure apps/demo sidecar directory exists
+      file:
+        path: "{{ liberty_server_dir }}/apps/demo"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
+    - name: Download liberty-demo-1.0.0.war from S3
+      command: >
+        aws s3 cp s3://{{ s3_bucket }}/{{ s3_war_key }}
+        {{ liberty_server_dir }}/apps/liberty-demo-1.0.0.war
+      environment:
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+
+    - name: Set ownership on rollback WAR
+      file:
+        path: "{{ liberty_server_dir }}/apps/liberty-demo-1.0.0.war"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+
+    - name: Deploy application1.xml for rollback version
+      copy:
+        dest: "{{ liberty_server_dir }}/application1.xml"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          <server>
+              <application id="liberty-base"
+                           name="liberty-base"
+                           type="war"
+                           location="{{ liberty_server_dir }}/apps/liberty-demo-1.0.0.war">
+                  <classloader delegation="parentLast"/>
+              </application>
+          </server>
+
+    - name: Deploy app.properties for rollback version
+      copy:
+        dest: "{{ liberty_server_dir }}/apps/demo/app.properties"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          # Written by AAP rollback-liberty-app job template
+          # Rolled back to v1.0.0
+
+          deploy.mode=non-immutable
+          app.version=1.0.0
+          liberty.version=26.0.0
+
+          # HCP Packer fields intentionally blank for non-immutable path
+          ami.id=
+          ami.version=
+          packer.bucket=
+          packer.channel=
+          packer.build.timestamp=
+
+    # START LIBERTY WITH ROLLBACK VERSION
+
+    - name: Start Liberty server
+      command: >
+        su - wsadmin -c
+        "{{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}"
+      environment:
+        JAVA_HOME: "{{ ansible_env.JAVA_HOME | default('/usr/lib/jvm/java-11-openjdk') }}"
+        WLP_USER_DIR: "{{ liberty_usr_dir }}"
+      register: liberty_start_result
+      failed_when:
+        - liberty_start_result.rc != 0
+        - "'already running' not in liberty_start_result.stdout"
+
+    - name: Wait for Liberty HTTP endpoint to come back up
+      wait_for:
+        host: "127.0.0.1"
+        port: 9080
+        timeout: 120
+        state: started
+
+    # VERIFY ROLLBACK
+
+    - name: Verify rollback version is serving via ALB
+      uri:
+        url: "http://{{ alb_dns_name | default('127.0.0.1') }}/liberty-base/health"
+        method: GET
+        status_code: 200
+        timeout: 30
+      register: health_check
+      retries: 5
+      delay: 10
+      until: health_check.status == 200
+      delegate_to: localhost
+      become: no
+
+    - name: Confirm rollback health check
+      debug:
+        msg: "Rollback to v{{ rollback_version }} successful - {{ health_check.json }}"
+
+    # RUNTIME INJECTION -- update runtime.json to reflect rollback state
+
+    - name: Write runtime.json to reflect rollback
+      copy:
+        dest: "{{ liberty_server_dir }}/apps/demo/runtime.json"
+        owner: wsadmin
+        group: wsadm
+        mode: '0644'
+        content: |
+          {
+            "deployed_by":   "aap-job-{{ tower_job_id | default('local-run') }}",
+            "environment":   "demo",
+            "deployed_at":   "{{ ansible_date_time.iso8601 }}",
+            "app_version":   "1.0.0",
+            "aap_template":  "{{ tower_job_template_name | default('rollback-liberty-app') }}",
+            "managed_host":  "{{ ansible_hostname }}",
+            "rollback":      "true",
+            "rolled_back_from": "1.2.0"
+          }
+
+    - name: Print rollback summary
+      debug:
+        msg: >
+          Rollback complete.
+          Version: 1.0.0
+          Server: {{ ansible_hostname }}
+          WAR: liberty-demo-1.0.0.war
+          Context root: /liberty-base/
