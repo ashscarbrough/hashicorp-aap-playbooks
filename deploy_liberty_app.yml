@@ -21,13 +21,8 @@
     # deploy_mode is static for this path
     deploy_mode: "non-immutable"
 
-    # app_version is passed as an extra var from the AAP workflow or survey
-    # Default is intentionally not set here to avoid self-reference recursion
-    # If not passed, tasks fall back to '1.0.0' inline
-
-    # Passed from Terraform action via workflow extra vars
-    # Default allows the playbook to run standalone without the workflow
-    alb_dns_name: "{{ aap_alb_dns_name | default('localhost') }}"
+    # app_version and alb_dns_name are passed as extra vars from AAP workflow
+    # Defaults allow the playbook to run standalone outside the workflow
 
   tasks:
 
@@ -116,42 +111,55 @@
           packer.channel=
           packer.build.timestamp=
 
-    # WAIT FOR LIBERTY TO PICK UP THE APP
-    # applicationMonitor polled mode detects new WARs within ~5 seconds
-    # No server restart required
+    # RESTART LIBERTY
+    # application1.xml is pulled in via an <include> directive in server.xml
+    # The applicationMonitor polled mode does not detect new <include> directives
+    # dynamically -- a restart is required for Liberty to register the new app
 
-    - name: Restart Liberty to pick up application config
+    - name: Stop Liberty server
       command: >
         su - wsadmin -c
         "{{ liberty_wlp_dir }}/bin/server stop {{ liberty_server_name }}"
       environment:
-        JAVA_HOME: "{{ java_home | default('/usr/lib/jvm/java-11-openjdk') }}"
+        JAVA_HOME: "{{ ansible_env.JAVA_HOME | default('/usr/lib/jvm/java-11-openjdk') }}"
         WLP_USER_DIR: "{{ liberty_usr_dir }}"
-      ignore_errors: true
+      register: liberty_stop_result
+      failed_when:
+        - liberty_stop_result.rc != 0
+        - "'is not running' not in liberty_stop_result.stdout"
 
-    - name: Start Liberty after config update
+    - name: Start Liberty server
       command: >
         su - wsadmin -c
         "{{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}"
       environment:
-        JAVA_HOME: "{{ java_home | default('/usr/lib/jvm/java-11-openjdk') }}"
+        JAVA_HOME: "{{ ansible_env.JAVA_HOME | default('/usr/lib/jvm/java-11-openjdk') }}"
         WLP_USER_DIR: "{{ liberty_usr_dir }}"
+      register: liberty_start_result
+      failed_when:
+        - liberty_start_result.rc != 0
+        - "'already running' not in liberty_start_result.stdout"
 
-    - name: Wait for Liberty to deploy the application
+    - name: Wait for Liberty HTTP endpoint to come back up
       wait_for:
-        timeout: 15
-      delegate_to: localhost
-      become: no
+        host: "127.0.0.1"
+        port: 9080
+        timeout: 120
+        state: started
 
-    - name: Verify application endpoint is responding
+    # VERIFY APPLICATION
+    # Health check via ALB DNS to validate the full traffic path
+    # alb_dns_name is passed as an extra var from the Terraform action
+
+    - name: Verify application endpoint via ALB
       uri:
-        url: "http://{{ ansible_host }}:9080/liberty-demo/health"
+        url: "http://{{ alb_dns_name | default('127.0.0.1') }}/liberty-demo/health"
         method: GET
         status_code: 200
         timeout: 30
       register: health_check
       retries: 5
-      delay: 5
+      delay: 10
       until: health_check.status == 200
       delegate_to: localhost
       become: no

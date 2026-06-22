@@ -96,7 +96,7 @@
     - name: Refresh DNF cache
       ansible.builtin.dnf:
         update_cache: true
-      
+
     - name: Install AWS CLI
       ansible.builtin.dnf:
         name: awscli2
@@ -292,7 +292,8 @@
     - name: Create Liberty server instance
       command: >
         su - wsadmin -c
-        "{{ liberty_wlp_dir }}/bin/server create {{ liberty_server_name }}"
+        "WLP_USER_DIR={{ liberty_usr_dir }}
+        {{ liberty_wlp_dir }}/bin/server create {{ liberty_server_name }}"
       environment:
         JAVA_HOME: "{{ java_home }}"
         WLP_USER_DIR: "{{ liberty_usr_dir }}"
@@ -362,7 +363,7 @@
               <variable name="APP_SERVER_NAME" value="${bootstrap.server.name}" />
               <variable name="HOST" value="${bootstrap.host.name}" />
 
-              <httpEndpoint id="defaultHttpEndpoint" host="*"
+              <httpEndpoint id="defaultHttpEndpoint" host="0.0.0.0"
                             httpPort="{{ http_port }}"
                             httpsPort="${bootstrap.https.port}">
                   <sslOptions sslRef="defaultSSLConfig" />
@@ -444,11 +445,27 @@
           bootstrap.host.name={{ ansible_hostname }}
           bootstrap.https.port={{ https_port }}
 
-    # JAVA_HOME uses the resolved system JRE path, not the bundled JRE path
-    # which does not exist in wlp-base-all
-    - name: Deploy server.env
+    # server.env is written to both the server dir AND the versioned install
+    # location to ensure WLP_USER_DIR is picked up regardless of how Liberty
+    # resolves its startup path via the wlp symlink
+    - name: Deploy server.env to server dir
       copy:
         dest: "{{ liberty_server_dir }}/server.env"
+        owner: wsadmin
+        group: wsadm
+        mode: '0640'
+        content: |
+          JVM_ARGS=-Dhttps.protocols=TLSv1.2 -Djdk.tls.client.protocols=TLSv1.2
+          WLP_SKIP_UMASK=true
+          JAVA_HOME={{ java_home }}
+          WLP_USER_DIR={{ liberty_usr_dir }}
+          KEYSTORE_PASSWORD={{ keystore_password }}
+          LIBERTY_ADMIN_USER={{ liberty_admin_user }}
+          LIBERTY_ADMIN_PASSWORD={{ liberty_admin_password }}
+
+    - name: Deploy server.env to versioned install dir
+      copy:
+        dest: "{{ liberty_install_dir }}/usr/servers/{{ liberty_server_name }}/server.env"
         owner: wsadmin
         group: wsadm
         mode: '0640'
@@ -480,7 +497,8 @@
           -Djdk.tls.client.protocols=TLSv1.2
 
     # SYSTEMD SERVICE
-    # JAVA_HOME in the unit file uses the resolved system JRE path
+    # WLP_USER_DIR is set explicitly in the unit to ensure Liberty always
+    # starts against /usr/WebSphere/usr regardless of symlink resolution
 
     - name: Deploy Liberty systemd unit
       copy:
@@ -501,7 +519,7 @@
           Environment=WLP_USER_DIR={{ liberty_usr_dir }}
           ExecStart={{ liberty_wlp_dir }}/bin/server start {{ liberty_server_name }}
           ExecStop={{ liberty_wlp_dir }}/bin/server stop {{ liberty_server_name }}
-          PIDFile={{ liberty_usr_dir }}/servers/{{ liberty_server_name }}/workarea/.pid
+          PIDFile={{ liberty_usr_dir }}/servers/.pid/{{ liberty_server_name }}.pid
           TimeoutStartSec=120
           TimeoutStopSec=60
           Restart=on-failure
