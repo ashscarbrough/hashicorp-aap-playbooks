@@ -463,6 +463,14 @@
           LIBERTY_ADMIN_USER={{ liberty_admin_user }}
           LIBERTY_ADMIN_PASSWORD={{ liberty_admin_password }}
 
+    - name: Create versioned install server dir for server.env
+      file:
+        path: "{{ liberty_install_dir }}/usr/servers/{{ liberty_server_name }}"
+        state: directory
+        owner: wsadmin
+        group: wsadm
+        mode: '0755'
+
     - name: Deploy server.env to versioned install dir
       copy:
         dest: "{{ liberty_install_dir }}/usr/servers/{{ liberty_server_name }}/server.env"
