@@ -8,7 +8,9 @@
 
   vars:
     liberty_usr_dir:     "/usr/WebSphere/usr"
-    liberty_server_name: "liberty-base"
+    # liberty_server_name passed as extra var from AAP workflow or Terraform action
+    # liberty-base for mutable path, liberty-app for immutable path
+    liberty_server_name: "{{ liberty_server_name | default('liberty-base') }}"
     liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
 
     # AAP magic variables - automatically available in any job run
@@ -67,7 +69,7 @@
 
     - name: Verify page still responding after update
       uri:
-        url: "http://127.0.0.1:9080/liberty-base/health"
+        url: "http://127.0.0.1:9080/{{ liberty_server_name }}/health"
         method: GET
         status_code: 200
         timeout: 15
