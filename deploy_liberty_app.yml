@@ -82,10 +82,10 @@
         mode: '0644'
         content: |
           <server>
-              <application id="liberty-demo"
-                           name="liberty-demo"
-                           type="war"
-                           location="{{ liberty_server_dir }}/apps/liberty-demo.war">
+              <application id="liberty-base"
+                          name="liberty-base"
+                          type="war"
+                          location="/usr/WebSphere/usr/servers/liberty-base/apps/liberty-demo.war">
                   <classloader delegation="parentLast"/>
               </application>
           </server>
@@ -153,7 +153,7 @@
 
     - name: Verify application endpoint via ALB
       uri:
-        url: "http://{{ alb_dns_name | default('127.0.0.1') }}/liberty-demo/health"
+        url: "http://{{ alb_dns_name | default('127.0.0.1') }}/liberty-base/health"
         method: GET
         status_code: 200
         timeout: 30
