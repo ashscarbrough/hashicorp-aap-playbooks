@@ -67,13 +67,11 @@
 
     - name: Verify page still responding after update
       uri:
-        url: "http://{{ ansible_host }}:9080/liberty-demo/health"
+        url: "http://127.0.0.1:9080/liberty-base/health"
         method: GET
         status_code: 200
         timeout: 15
       register: post_update_health
-      delegate_to: localhost
-      become: no
 
     - name: Confirm health after runtime update
       debug:
