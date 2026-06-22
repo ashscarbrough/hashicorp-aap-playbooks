@@ -18,9 +18,12 @@
     liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
     liberty_wlp_dir:     "/usr/WebSphere/wlp"
 
-    # Application metadata - app_version supplied by AAP survey
-    app_version:    "{{ app_version | default('1.0.0') }}"
-    deploy_mode:    "non-immutable"
+    # deploy_mode is static for this path
+    deploy_mode: "non-immutable"
+
+    # app_version is passed as an extra var from the AAP workflow or survey
+    # Default is intentionally not set here to avoid self-reference recursion
+    # If not passed, tasks fall back to '1.0.0' inline
 
   tasks:
 
@@ -99,7 +102,7 @@
           # Path: non-immutable
 
           deploy.mode=non-immutable
-          app.version={{ app_version }}
+          app.version={{ app_version | default('1.0.0') }}
           liberty.version=26.0.0
 
           # HCP Packer fields intentionally blank for non-immutable path
