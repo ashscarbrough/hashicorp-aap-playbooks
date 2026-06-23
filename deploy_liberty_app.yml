@@ -177,7 +177,7 @@
         mode: '0644'
       vars:
         deployment_metadata:
-          app_version:      "1.0.0"
+          app_version:      "{{ application_version }}"
           deploy_mode:      "non-immutable"
           liberty_version:  "26.0.0"
           deployed_at:      "{{ ansible_date_time.iso8601 }}"
