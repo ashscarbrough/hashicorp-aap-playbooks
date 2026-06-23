@@ -7,7 +7,6 @@
     packages_list: "{{ packages | default([]) }}"
 
   tasks:
-  tasks:
 
     - name: Fail if no packages provided
       ansible.builtin.fail:
@@ -18,6 +17,7 @@
       ansible.builtin.dnf:
         name: "{{ item.name }}"
         state: present
+        update_cache: true
       loop: "{{ packages_list | selectattr('version', 'undefined') | list + packages_list | selectattr('version', 'equalto', None) | list }}"
       loop_control:
         label: "{{ item.name }}"
@@ -26,6 +26,7 @@
       ansible.builtin.dnf:
         name: "{{ item.name }}-{{ item.version }}"
         state: present
+        update_cache: true
       loop: "{{ packages_list | selectattr('version', 'defined') | selectattr('version', 'ne', None) | list }}"
       loop_control:
         label: "{{ item.name }}-{{ item.version }}"
