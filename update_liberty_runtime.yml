@@ -8,17 +8,10 @@
 
   vars:
     liberty_usr_dir:     "/usr/WebSphere/usr"
-    # liberty_server_name passed as extra var from AAP workflow or Terraform action
-    # liberty-base for mutable path, liberty-app for immutable path
     liberty_server_name: "{{ liberty_server_name | default('liberty-base') }}"
     liberty_server_dir:  "{{ liberty_usr_dir }}/servers/{{ liberty_server_name }}"
-
-    # AAP magic variables - automatically available in any job run
     aap_job_id:   "{{ tower_job_id            | default('local-run') }}"
     aap_template: "{{ tower_job_template_name | default('update-liberty-runtime') }}"
-
-    # app_version and deploy_environment are supplied via AAP survey
-    # Defaults are handled inline at point of use to avoid self-reference recursion
 
   tasks:
 
@@ -37,8 +30,9 @@
       when: not demo_dir_check.stat.exists
 
     # WRITE RUNTIME.JSON
-    # This file is read by the servlet on every page load.
-    # Liberty does not need to restart - the file is read from disk at request time.
+    # Written as compact single-line JSON via to_json filter to prevent
+    # JSON.parse() failure in the browser -- block scalar (|) produces
+    # literal newlines which break JavaScript string parsing
 
     - name: Write runtime.json
       copy:
@@ -46,15 +40,15 @@
         owner: wsadmin
         group: wsadm
         mode: '0644'
-        content: |
-          {
-            "deployed_by":   "aap-job-{{ aap_job_id }}",
-            "environment":   "{{ deploy_environment | default('demo') }}",
-            "deployed_at":   "{{ ansible_date_time.iso8601 }}",
-            "app_version":   "{{ app_version | default('1.0.0') }}",
-            "aap_template":  "{{ aap_template }}",
-            "managed_host":  "{{ ansible_hostname }}"
-          }
+        content: "{{ runtime_data | to_json }}\n"
+      vars:
+        runtime_data:
+          deployed_by:  "aap-job-{{ aap_job_id }}"
+          environment:  "{{ deploy_environment | default('demo') }}"
+          deployed_at:  "{{ ansible_date_time.iso8601 }}"
+          app_version:  "{{ app_version | default('1.0.0') }}"
+          aap_template: "{{ aap_template }}"
+          managed_host: "{{ ansible_hostname }}"
 
     # VALIDATE
 
@@ -74,6 +68,9 @@
         status_code: 200
         timeout: 15
       register: post_update_health
+      retries: 5
+      delay: 10
+      until: post_update_health.status == 200
 
     - name: Confirm health after runtime update
       debug:
