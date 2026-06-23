@@ -179,3 +179,67 @@
           Server: {{ ansible_hostname }}
           WAR: liberty-demo-1.0.0.war
           Context root: /liberty-base/
+
+    - name: Write rollback metadata to SSM Parameter Store
+      command: >
+        aws ssm put-parameter
+        --name "/liberty-base/{{ liberty_server_name }}/deployment"
+        --type "String"
+        --overwrite
+        --region "{{ aws_region | default('us-east-1') }}"
+        --value '{{ deployment_metadata | to_json }}'
+      vars:
+        deployment_metadata:
+          app_version:      "1.0.0"
+          deploy_mode:      "non-immutable"
+          liberty_version:  "26.0.0"
+          deployed_at:      "{{ ansible_date_time.iso8601 }}"
+          aap_job_id:       "{{ tower_job_id | default('local-run') }}"
+          aap_template:     "{{ tower_job_template_name | default('rollback-liberty-app') }}"
+          managed_host:     "{{ ansible_hostname }}"
+          rollback:         "true"
+          rolled_back_from: "1.2.0"
+      become: yes
+
+    - name: Confirm SSM rollback parameter written
+      command: >
+        aws ssm get-parameter
+        --name "/liberty-base/{{ liberty_server_name }}/deployment"
+        --region "{{ aws_region | default('us-east-1') }}"
+        --query 'Parameter.Value'
+        --output text
+      register: ssm_confirm
+      become: yes
+
+    - name: Print SSM rollback parameter value
+      debug:
+        msg: "SSM rollback metadata: {{ ssm_confirm.stdout }}"
+
+    - name: Trigger TFE refresh-only run (fire and forget)
+      uri:
+        url: "https://app.terraform.io/api/v2/runs"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ tfe_token }}"
+          Content-Type:  "application/vnd.api+json"
+        body_format: json
+        body:
+          data:
+            type: runs
+            attributes:
+              message: "Refresh deployment metadata — {{ tower_job_template_name | default('aap-deploy') }} {{ ansible_date_time.iso8601 }}"
+              refresh-only: true
+              auto-apply:   true
+            relationships:
+              workspace:
+                data:
+                  type: workspaces
+                  id:   "{{ tfe_workspace_id }}"
+        status_code: 201
+      register: tfe_run
+      delegate_to: localhost
+      become: no
+
+    - name: Print TFE refresh run ID
+      debug:
+        msg: "TFE refresh-only run queued: {{ tfe_run.json.data.id }} — will execute after workspace lock is released"

@@ -24,6 +24,8 @@
     # app_version and alb_dns_name are passed as extra vars from AAP workflow
     # Defaults allow the playbook to run standalone outside the workflow
 
+    application_version: "{{ app_version | default('1.0.0') }}"
+
   tasks:
 
     # PRE-FLIGHT
@@ -101,7 +103,7 @@
           # Path: non-immutable
 
           deploy.mode=non-immutable
-          app.version={{ app_version | default('1.0.0') }}
+          app.version={{ application_version }}
           liberty.version=26.0.0
 
           # HCP Packer fields intentionally blank for non-immutable path
@@ -167,3 +169,67 @@
     - name: Print health check response
       debug:
         msg: "Health check passed - {{ health_check.json }}"
+
+    - name: Write deployment metadata to SSM Parameter Store
+      command: >
+        aws ssm put-parameter
+        --name "/liberty-base/{{ liberty_server_name }}/deployment"
+        --type "String"
+        --overwrite
+        --region "{{ aws_region | default('us-east-1') }}"
+        --value '{{ deployment_metadata | to_json }}'
+      vars:
+        deployment_metadata:
+          app_version:      "{{ app_version | default('1.2.0') }}"
+          deploy_mode:      "non-immutable"
+          liberty_version:  "26.0.0"
+          deployed_at:      "{{ ansible_date_time.iso8601 }}"
+          aap_job_id:       "{{ tower_job_id | default('local-run') }}"
+          aap_template:     "{{ tower_job_template_name | default('unknown') }}"
+          managed_host:     "{{ ansible_hostname }}"
+          rollback:         "false"
+          rolled_back_from: ""
+      become: yes
+
+    - name: Confirm SSM parameter written
+      command: >
+        aws ssm get-parameter
+        --name "/liberty-base/{{ liberty_server_name }}/deployment"
+        --region "{{ aws_region | default('us-east-1') }}"
+        --query 'Parameter.Value'
+        --output text
+      register: ssm_confirm
+      become: yes
+
+    - name: Print SSM parameter value
+      debug:
+        msg: "SSM deployment metadata: {{ ssm_confirm.stdout }}"
+
+    - name: Trigger TFE refresh-only run (fire and forget)
+      uri:
+        url: "https://app.terraform.io/api/v2/runs"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ tfe_token }}"
+          Content-Type:  "application/vnd.api+json"
+        body_format: json
+        body:
+          data:
+            type: runs
+            attributes:
+              message: "Refresh deployment metadata — {{ tower_job_template_name | default('aap-deploy') }} {{ ansible_date_time.iso8601 }}"
+              refresh-only: true
+              auto-apply:   true
+            relationships:
+              workspace:
+                data:
+                  type: workspaces
+                  id:   "{{ tfe_workspace_id }}"
+        status_code: 201
+      register: tfe_run
+      delegate_to: localhost
+      become: no
+
+    - name: Print TFE refresh run ID
+      debug:
+        msg: "TFE refresh-only run queued: {{ tfe_run.json.data.id }} — will execute after workspace lock is released"
