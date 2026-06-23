@@ -181,13 +181,12 @@
           Context root: /liberty-base/
 
     - name: Write rollback metadata to SSM Parameter Store
-      command: >
-        aws ssm put-parameter
-        --name "/liberty-base/{{ liberty_server_name }}/deployment"
-        --type "String"
-        --overwrite
-        --region "{{ aws_region | default('us-east-1') }}"
-        --value '{{ deployment_metadata | to_json }}'
+      community.aws.aws_ssm_parameter_store:
+        name: "/liberty-base/{{ liberty_server_name }}/deployment"
+        value: "{{ deployment_metadata | to_json }}"
+        string_type: "String"
+        overwrite_value: always
+        region: "{{ aws_region | default('us-east-1') }}"
       vars:
         deployment_metadata:
           app_version:      "1.0.0"
@@ -199,7 +198,7 @@
           managed_host:     "{{ ansible_hostname }}"
           rollback:         "true"
           rolled_back_from: "1.2.0"
-      become: yes
+      become: no
 
     - name: Confirm SSM rollback parameter written
       command: >

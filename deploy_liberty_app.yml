@@ -170,26 +170,25 @@
       debug:
         msg: "Health check passed - {{ health_check.json }}"
 
-    - name: Write deployment metadata to SSM Parameter Store
-      command: >
-        aws ssm put-parameter
-        --name "/liberty-base/{{ liberty_server_name }}/deployment"
-        --type "String"
-        --overwrite
-        --region "{{ aws_region | default('us-east-1') }}"
-        --value '{{ deployment_metadata | to_json }}'
+    - name: Write rollback metadata to SSM Parameter Store
+      community.aws.aws_ssm_parameter_store:
+        name: "/liberty-base/{{ liberty_server_name }}/deployment"
+        value: "{{ deployment_metadata | to_json }}"
+        string_type: "String"
+        overwrite_value: always
+        region: "{{ aws_region | default('us-east-1') }}"
       vars:
         deployment_metadata:
-          app_version:      "{{ app_version | default('1.2.0') }}"
+          app_version:      "1.0.0"
           deploy_mode:      "non-immutable"
           liberty_version:  "26.0.0"
           deployed_at:      "{{ ansible_date_time.iso8601 }}"
           aap_job_id:       "{{ tower_job_id | default('local-run') }}"
-          aap_template:     "{{ tower_job_template_name | default('unknown') }}"
+          aap_template:     "{{ tower_job_template_name | default('rollback-liberty-app') }}"
           managed_host:     "{{ ansible_hostname }}"
-          rollback:         "false"
-          rolled_back_from: ""
-      become: yes
+          rollback:         "true"
+          rolled_back_from: "1.2.0"
+      become: no
 
     - name: Confirm SSM parameter written
       command: >
