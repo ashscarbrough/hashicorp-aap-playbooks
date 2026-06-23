@@ -170,13 +170,11 @@
       debug:
         msg: "Health check passed - {{ health_check.json }}"
 
-    - name: Write rollback metadata to SSM Parameter Store
-      community.aws.aws_ssm_parameter_store:
-        name: "/liberty-base/{{ liberty_server_name }}/deployment"
-        value: "{{ deployment_metadata | to_json }}"
-        string_type: "String"
-        overwrite_value: always
-        region: "{{ aws_region | default('us-east-1') }}"
+    - name: Write deployment metadata to temp file
+      copy:
+        dest: /tmp/deployment-metadata.json
+        content: "{{ deployment_metadata | to_json }}"
+        mode: '0644'
       vars:
         deployment_metadata:
           app_version:      "1.0.0"
@@ -188,12 +186,24 @@
           managed_host:     "{{ ansible_hostname }}"
           rollback:         "true"
           rolled_back_from: "1.2.0"
-      become: no
+      become: yes
+
+    - name: Write rollback metadata to SSM Parameter Store
+      ansible.builtin.shell: |
+        aws ssm put-parameter \
+          --name "/liberty-demo/{{ liberty_server_name }}/deployment" \
+          --type "String" \
+          --overwrite \
+          --region "{{ aws_region | default('us-east-1') }}" \
+          --value "$(cat /tmp/deployment-metadata.json)"
+      environment:
+        AWS_DEFAULT_REGION: "{{ aws_region | default('us-east-1') }}"
+      become: yes
 
     - name: Confirm SSM parameter written
-      command: >
+      ansible.builtin.shell: >
         aws ssm get-parameter
-        --name "/liberty-base/{{ liberty_server_name }}/deployment"
+        --name "/liberty-demo/{{ liberty_server_name }}/deployment"
         --region "{{ aws_region | default('us-east-1') }}"
         --query 'Parameter.Value'
         --output text
@@ -203,6 +213,12 @@
     - name: Print SSM parameter value
       debug:
         msg: "SSM deployment metadata: {{ ssm_confirm.stdout }}"
+
+    - name: Remove temp metadata file
+      file:
+        path: /tmp/deployment-metadata.json
+        state: absent
+      become: yes
 
     - name: Trigger TFE refresh-only run (fire and forget)
       uri:
